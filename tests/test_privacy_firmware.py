@@ -31,3 +31,5 @@ def test_field_firmware_invokes_detection_without_image_payloads():
 
     assert "AI.invoke(1, false, false)" in source
     assert "timestamp_ms,frame_id,detection_id,bbox_x,bbox_y,bbox_w,bbox_h,confidence,target" in source
+    assert "#error,ai_invoke_failed" in source
+    assert "ai_begin_failed" in source

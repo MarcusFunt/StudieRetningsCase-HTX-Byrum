@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -24,6 +25,7 @@ from pedpy import (
 
 
 _PEDPY_FRAME_COL = "_pedpy_frame"
+_TIMING_JITTER_WARNING_RATIO = 0.25
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,34 @@ def _infer_frame_rate(timestamps_ms: pd.Series) -> float:
     if len(positive_deltas_ms) == 0:
         return 1.0
     return float(1000.0 / np.median(positive_deltas_ms))
+
+
+def _positive_timestamp_deltas_ms(timestamps_ms: pd.Series) -> np.ndarray:
+    unique_timestamps = np.sort(timestamps_ms.dropna().to_numpy(dtype=np.float64))
+    unique_timestamps = np.unique(unique_timestamps)
+    deltas_ms = np.diff(unique_timestamps)
+    return deltas_ms[deltas_ms > 0]
+
+
+def _warn_if_jittery_timestamps(timestamps_ms: pd.Series) -> None:
+    positive_deltas_ms = _positive_timestamp_deltas_ms(timestamps_ms)
+    if len(positive_deltas_ms) < 3:
+        return
+
+    median_delta_ms = float(np.median(positive_deltas_ms))
+    if median_delta_ms <= 0:
+        return
+
+    max_relative_jitter = float(
+        np.max(np.abs(positive_deltas_ms - median_delta_ms)) / median_delta_ms
+    )
+    if max_relative_jitter > _TIMING_JITTER_WARNING_RATIO:
+        warnings.warn(
+            "Timestamp intervals are jittery; PedPy frame mapping uses the median interval, "
+            "so speed and grid metrics may be approximate.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
 
 
 def _timestamp_frame_lookup(timestamps_ms: pd.Series) -> dict[float, int]:
@@ -72,6 +102,7 @@ def _prepare_pedpy_tracks(tracks: pd.DataFrame) -> _PedPyTracks:
     if output.empty:
         return _PedPyTracks(output, None)
 
+    _warn_if_jittery_timestamps(output["timestamp_ms"])
     frame_lookup = _timestamp_frame_lookup(output["timestamp_ms"])
     output[_PEDPY_FRAME_COL] = output["timestamp_ms"].map(frame_lookup)
 

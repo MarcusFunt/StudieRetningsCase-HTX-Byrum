@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from pedflow.metrics import add_dwell_flags, estimate_speeds, summarize_flow, track_summaries
 from pedflow.tracking import filter_short_tracks, link_detections
@@ -53,6 +54,52 @@ def test_short_tracks_are_removed():
     filtered = filter_short_tracks(linked, min_duration_s=1.0, min_detections=4)
 
     assert filtered.empty
+
+
+def test_velocity_prediction_keeps_ids_when_tracks_cross():
+    detections = pd.DataFrame(
+        [
+            _ground_row(0, 0, 0, 0.0, 0.0),
+            _ground_row(0, 0, 1, 3.0, 0.0),
+            _ground_row(1000, 1, 0, 1.0, 0.0),
+            _ground_row(1000, 1, 1, 2.0, 0.0),
+            _ground_row(2000, 2, 0, 1.0, 0.0),
+            _ground_row(2000, 2, 1, 2.0, 0.0),
+            _ground_row(3000, 3, 0, 0.0, 0.0),
+            _ground_row(3000, 3, 1, 3.0, 0.0),
+        ]
+    )
+
+    linked = link_detections(
+        detections,
+        max_matching_speed_m_s=2.0,
+        smoothing_alpha=1.0,
+        velocity_alpha=1.0,
+        min_gate_m=0.25,
+    )
+
+    first_track = linked.loc[linked["track_id"] == 1, "ground_x_m"].tolist()
+    second_track = linked.loc[linked["track_id"] == 2, "ground_x_m"].tolist()
+
+    assert first_track == [0.0, 1.0, 2.0, 3.0]
+    assert second_track == [3.0, 2.0, 1.0, 0.0]
+
+
+def test_jittery_timestamps_warn_before_pedpy_frame_mapping():
+    tracks = pd.DataFrame(
+        [
+            {
+                "track_id": 1,
+                "timestamp_ms": timestamp_ms,
+                "smooth_ground_x_m": index * 0.1,
+                "smooth_ground_y_m": 0.0,
+            }
+            for index, timestamp_ms in enumerate([0, 100, 400, 500])
+        ]
+    )
+
+    with pytest.warns(RuntimeWarning, match="Timestamp intervals are jittery"):
+        estimate_speeds(tracks, window_s=0.2)
 
 
 def test_dwell_flags_and_summary_metrics():

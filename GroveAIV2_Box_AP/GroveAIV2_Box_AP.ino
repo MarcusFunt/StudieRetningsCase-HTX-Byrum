@@ -3,15 +3,41 @@
 namespace {
 constexpr unsigned long SERIAL_BAUD = 115200;
 constexpr unsigned long INFERENCE_INTERVAL_MS = 100;
+constexpr unsigned long ERROR_LOG_INTERVAL_MS = 5000;
 
 SSCMA AI;
 
 unsigned long lastInferenceMs = 0;
+unsigned long lastInvokeErrorLogMs = 0;
 uint32_t frameId = 0;
+uint32_t invokeFailureCount = 0;
+bool aiReady = false;
 
 void printCsvHeader()
 {
   Serial.println("timestamp_ms,frame_id,detection_id,bbox_x,bbox_y,bbox_w,bbox_h,confidence,target");
+}
+
+void printStatus(const char *level, const char *code)
+{
+  Serial.print("#");
+  Serial.print(level);
+  Serial.print(",");
+  Serial.println(code);
+}
+
+void printInvokeError(unsigned long now, int result)
+{
+  ++invokeFailureCount;
+  if (lastInvokeErrorLogMs != 0 && now - lastInvokeErrorLogMs < ERROR_LOG_INTERVAL_MS) {
+    return;
+  }
+
+  lastInvokeErrorLogMs = now;
+  Serial.print("#error,ai_invoke_failed,");
+  Serial.print(result);
+  Serial.print(",");
+  Serial.println(invokeFailureCount);
 }
 
 void printCsvRow(
@@ -45,6 +71,10 @@ void printCsvRow(
 
 void logDetections()
 {
+  if (!aiReady) {
+    return;
+  }
+
   const unsigned long now = millis();
 
   if (now - lastInferenceMs < INFERENCE_INTERVAL_MS) {
@@ -53,7 +83,9 @@ void logDetections()
 
   lastInferenceMs = now;
 
-  if (AI.invoke(1, false, false) != 0) {
+  const int invokeResult = AI.invoke(1, false, false);
+  if (invokeResult != 0) {
+    printInvokeError(now, invokeResult);
     return;
   }
 
@@ -68,8 +100,14 @@ void logDetections()
 void setup()
 {
   Serial.begin(SERIAL_BAUD);
-  AI.begin();
   printCsvHeader();
+  if (!AI.begin()) {
+    printStatus("error", "ai_begin_failed");
+    return;
+  }
+
+  aiReady = true;
+  printStatus("status", "ai_ready");
 }
 
 void loop()

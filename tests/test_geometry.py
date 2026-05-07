@@ -1,8 +1,9 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from pedflow.calibration import compute_ground_homography
-from pedflow.geometry import bbox_foot_points, detections_to_ground
+from pedflow.geometry import bbox_foot_points, detections_to_ground, validate_detection_input
 
 
 def test_bbox_foot_points_use_bottom_center():
@@ -48,6 +49,36 @@ def test_detections_are_undistorted_before_homography():
 
     np.testing.assert_allclose(ground[["foot_x", "foot_y"]].to_numpy(), [[12.0, 28.0]])
     np.testing.assert_allclose(ground[["ground_x_m", "ground_y_m"]].to_numpy(), [[1.2, 2.8]])
+
+
+def test_detection_validation_rejects_bad_csv_values():
+    detections = pd.DataFrame(
+        [
+            {
+                "timestamp_ms": -1,
+                "frame_id": 0,
+                "detection_id": 0,
+                "bbox_x": 10.0,
+                "bbox_y": 20.0,
+                "bbox_w": 4.0,
+                "bbox_h": 8.0,
+                "confidence": 1.2,
+                "target": 0,
+            }
+        ]
+    )
+
+    with pytest.raises(ValueError, match="timestamp_ms"):
+        validate_detection_input(detections)
+
+    detections.loc[0, "timestamp_ms"] = 0
+    detections.loc[0, "bbox_w"] = -4
+    with pytest.raises(ValueError, match="bbox_w"):
+        validate_detection_input(detections)
+
+    detections.loc[0, "bbox_w"] = 4
+    with pytest.raises(ValueError, match="confidence"):
+        validate_detection_input(detections)
 
 
 def test_compute_ground_homography_reports_residuals():

@@ -11,6 +11,20 @@ import pandas as pd
 
 Calibration = dict[str, Any]
 
+DETECTION_COLUMNS = (
+    "timestamp_ms",
+    "frame_id",
+    "detection_id",
+    "bbox_x",
+    "bbox_y",
+    "bbox_w",
+    "bbox_h",
+    "confidence",
+    "target",
+)
+_DETECTION_NUMERIC_COLUMNS = DETECTION_COLUMNS
+_DETECTION_ID_COLUMNS = ("frame_id", "detection_id", "target")
+
 
 def load_calibration(path: str | Path) -> Calibration:
     with Path(path).open("r", encoding="utf-8") as file:
@@ -29,6 +43,37 @@ def calibration_matrix(calibration: Calibration, key: str) -> np.ndarray:
     if key not in calibration:
         raise KeyError(f"Missing '{key}' in calibration data")
     return np.asarray(calibration[key], dtype=np.float64)
+
+
+def validate_detection_input(detections: pd.DataFrame) -> pd.DataFrame:
+    missing = set(DETECTION_COLUMNS).difference(detections.columns)
+    if missing:
+        raise ValueError(f"Missing required detection columns: {sorted(missing)}")
+
+    output = detections.copy()
+    for column in _DETECTION_NUMERIC_COLUMNS:
+        converted = pd.to_numeric(output[column], errors="coerce")
+        values = converted.to_numpy(dtype=np.float64, na_value=np.nan)
+        if not np.isfinite(values).all():
+            raise ValueError(f"Detection column '{column}' must contain only finite numeric values")
+        output[column] = converted
+
+    for column in _DETECTION_ID_COLUMNS:
+        values = output[column].to_numpy(dtype=np.float64)
+        if not np.equal(np.mod(values, 1.0), 0.0).all():
+            raise ValueError(f"Detection column '{column}' must contain integer values")
+        if (output[column] < 0).any():
+            raise ValueError(f"Detection column '{column}' must be non-negative")
+        output[column] = output[column].astype("int64")
+
+    if (output["timestamp_ms"] < 0).any():
+        raise ValueError("Detection column 'timestamp_ms' must be non-negative")
+    if (output[["bbox_w", "bbox_h"]] < 0).any().any():
+        raise ValueError("Detection bbox_w and bbox_h must be non-negative")
+    if ((output["confidence"] < 0.0) | (output["confidence"] > 1.0)).any():
+        raise ValueError("Detection confidence values must be between 0.0 and 1.0")
+
+    return output
 
 
 def bbox_foot_points(detections: pd.DataFrame) -> np.ndarray:
@@ -81,10 +126,11 @@ def detections_to_ground(
     calibration: Calibration,
     confidence_threshold: float = 0.6,
 ) -> pd.DataFrame:
-    if "confidence" not in detections.columns:
-        raise ValueError("detections must contain a 'confidence' column")
+    if not 0.0 <= confidence_threshold <= 1.0:
+        raise ValueError("confidence_threshold must be between 0.0 and 1.0")
 
-    filtered = detections.loc[detections["confidence"] >= confidence_threshold].copy()
+    validated = validate_detection_input(detections)
+    filtered = validated.loc[validated["confidence"] >= confidence_threshold].copy()
     filtered = filtered.sort_values(["timestamp_ms", "frame_id", "detection_id"], kind="stable")
 
     foot_points = bbox_foot_points(filtered)

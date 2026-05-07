@@ -179,6 +179,7 @@ def calibrate_camera_from_charuco(
     object_points: list[np.ndarray] = []
     image_points: list[np.ndarray] = []
     used_images: list[str] = []
+    skipped_images: list[dict[str, str]] = []
     detected_corner_counts: list[int] = []
     detected_marker_counts: list[int] = []
     image_size: tuple[int, int] | None = None
@@ -187,6 +188,7 @@ def calibrate_camera_from_charuco(
         path = Path(image_path)
         image = cv2.imread(str(path))
         if image is None:
+            skipped_images.append({"path": str(path), "reason": "unreadable"})
             continue
 
         current_image_size = (int(image.shape[1]), int(image.shape[0]))
@@ -201,7 +203,8 @@ def calibrate_camera_from_charuco(
                 board,
                 min_corners=min_corners,
             )
-        except ValueError:
+        except ValueError as exc:
+            skipped_images.append({"path": str(path), "reason": str(exc)})
             continue
 
         object_points.append(obj_points)
@@ -211,9 +214,14 @@ def calibrate_camera_from_charuco(
         detected_marker_counts.append(marker_count)
 
     if image_size is None:
-        raise ValueError("No ChArUco calibration images could be read")
+        raise ValueError(
+            f"No ChArUco calibration images could be read; skipped {len(skipped_images)} images"
+        )
     if len(object_points) < 3:
-        raise ValueError("At least 3 usable ChArUco calibration images are required")
+        raise ValueError(
+            "At least 3 usable ChArUco calibration images are required "
+            f"({len(object_points)} usable, {len(skipped_images)} skipped)"
+        )
 
     rms, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(
         object_points,
@@ -253,6 +261,8 @@ def calibrate_camera_from_charuco(
         "min_charuco_corners_per_image": int(min_corners),
         "detected_charuco_corners_per_image": detected_corner_counts,
         "detected_aruco_markers_per_image": detected_marker_counts,
+        "skipped_images": skipped_images,
+        "skipped_image_count": len(skipped_images),
         "rms_reprojection_error_px": float(rms),
         "per_image_reprojection_error_px": per_image_errors,
         "used_images": used_images,
@@ -280,6 +290,7 @@ def calibrate_camera_from_checkerboard(
     object_points: list[np.ndarray] = []
     image_points: list[np.ndarray] = []
     used_images: list[str] = []
+    skipped_images: list[dict[str, str]] = []
     image_size: tuple[int, int] | None = None
 
     criteria = (
@@ -292,12 +303,19 @@ def calibrate_camera_from_checkerboard(
         path = Path(image_path)
         image = cv2.imread(str(path))
         if image is None:
+            skipped_images.append({"path": str(path), "reason": "unreadable"})
             continue
 
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        image_size = gray.shape[::-1]
+        current_image_size = (int(gray.shape[1]), int(gray.shape[0]))
+        if image_size is None:
+            image_size = current_image_size
+        elif image_size != current_image_size:
+            raise ValueError("All checkerboard calibration images must have the same resolution")
+
         found, corners = cv2.findChessboardCorners(gray, pattern_size)
         if not found:
+            skipped_images.append({"path": str(path), "reason": "checkerboard_not_found"})
             continue
 
         refined = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
@@ -306,9 +324,14 @@ def calibrate_camera_from_checkerboard(
         used_images.append(str(path))
 
     if image_size is None:
-        raise ValueError("No calibration images could be read")
+        raise ValueError(
+            f"No checkerboard calibration images could be read; skipped {len(skipped_images)} images"
+        )
     if len(object_points) < 3:
-        raise ValueError("At least 3 usable checkerboard images are required")
+        raise ValueError(
+            "At least 3 usable checkerboard images are required "
+            f"({len(object_points)} usable, {len(skipped_images)} skipped)"
+        )
 
     rms, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(
         object_points,
@@ -331,6 +354,8 @@ def calibrate_camera_from_checkerboard(
         "dist": dist_coeffs.reshape(-1).tolist(),
         "checkerboard_pattern_size": list(pattern_size),
         "checkerboard_square_size_m": float(square_size_m),
+        "skipped_images": skipped_images,
+        "skipped_image_count": len(skipped_images),
         "rms_reprojection_error_px": float(rms),
         "per_image_reprojection_error_px": per_image_errors,
         "used_images": used_images,

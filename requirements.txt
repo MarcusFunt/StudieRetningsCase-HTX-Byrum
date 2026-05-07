@@ -9,3 +9,5 @@ hvplot
 pyviz-comms
 pytest
 pyserial
+ruff
+scipy

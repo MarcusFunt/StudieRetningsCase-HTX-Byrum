@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from scipy.optimize import linear_sum_assignment
 
 
 @dataclass
@@ -12,6 +13,48 @@ class _TrackState:
     last_timestamp_ms: float
     smooth_x: float
     smooth_y: float
+    velocity_x_m_s: float = 0.0
+    velocity_y_m_s: float = 0.0
+
+
+def _predicted_position(track: _TrackState, timestamp_ms: float) -> tuple[float, float, float]:
+    dt_s = max((timestamp_ms - track.last_timestamp_ms) / 1000.0, 0.0)
+    return (
+        track.smooth_x + track.velocity_x_m_s * dt_s,
+        track.smooth_y + track.velocity_y_m_s * dt_s,
+        dt_s,
+    )
+
+
+def _global_assignments(
+    detections_xy: list[tuple[float, float]],
+    active: dict[int, _TrackState],
+    timestamp_ms: float,
+    max_matching_speed_m_s: float,
+    min_gate_m: float,
+) -> dict[int, int]:
+    if not detections_xy or not active:
+        return {}
+
+    track_ids = list(active)
+    blocked_cost = 1e9
+    costs = np.full((len(detections_xy), len(track_ids)), blocked_cost, dtype=np.float64)
+
+    for row_position, (x, y) in enumerate(detections_xy):
+        for column_position, track_id in enumerate(track_ids):
+            predicted_x, predicted_y, dt_s = _predicted_position(active[track_id], timestamp_ms)
+            gate_m = max(min_gate_m, max_matching_speed_m_s * dt_s)
+            distance_m = float(np.hypot(x - predicted_x, y - predicted_y))
+            if distance_m <= gate_m:
+                costs[row_position, column_position] = distance_m
+
+    row_indices, column_indices = linear_sum_assignment(costs)
+    assignments: dict[int, int] = {}
+    for row_position, column_position in zip(row_indices, column_indices):
+        if costs[row_position, column_position] >= blocked_cost:
+            continue
+        assignments[int(row_position)] = int(track_ids[int(column_position)])
+    return assignments
 
 
 def _required_ground_columns(detections: pd.DataFrame) -> None:
@@ -27,8 +70,20 @@ def link_detections(
     close_after_s: float = 1.0,
     smoothing_alpha: float = 0.3,
     min_gate_m: float = 0.75,
+    velocity_alpha: float = 0.5,
 ) -> pd.DataFrame:
     _required_ground_columns(detections)
+    if not 0.0 <= smoothing_alpha <= 1.0:
+        raise ValueError("smoothing_alpha must be between 0.0 and 1.0")
+    if not 0.0 <= velocity_alpha <= 1.0:
+        raise ValueError("velocity_alpha must be between 0.0 and 1.0")
+    if max_matching_speed_m_s <= 0:
+        raise ValueError("max_matching_speed_m_s must be greater than zero")
+    if close_after_s <= 0:
+        raise ValueError("close_after_s must be greater than zero")
+    if min_gate_m < 0:
+        raise ValueError("min_gate_m must be non-negative")
+
     if detections.empty:
         return detections.assign(
             track_id=pd.Series(dtype="int64"),
@@ -54,27 +109,17 @@ def link_detections(
         for track_id in stale_ids:
             del active[track_id]
 
-        candidates: list[tuple[float, int, int]] = []
-        for row_position, (_, detection) in enumerate(group.iterrows()):
-            x = float(detection["ground_x_m"])
-            y = float(detection["ground_y_m"])
-            for track_id, track in active.items():
-                dt_s = max((timestamp - track.last_timestamp_ms) / 1000.0, 0.0)
-                gate_m = max(min_gate_m, max_matching_speed_m_s * dt_s)
-                distance_m = float(np.hypot(x - track.smooth_x, y - track.smooth_y))
-                if distance_m <= gate_m:
-                    candidates.append((distance_m, row_position, track_id))
-
-        assigned_rows: set[int] = set()
-        assigned_tracks: set[int] = set()
-        row_to_track: dict[int, int] = {}
-
-        for _, row_position, track_id in sorted(candidates, key=lambda item: item[0]):
-            if row_position in assigned_rows or track_id in assigned_tracks:
-                continue
-            row_to_track[row_position] = track_id
-            assigned_rows.add(row_position)
-            assigned_tracks.add(track_id)
+        detections_xy = [
+            (float(detection["ground_x_m"]), float(detection["ground_y_m"]))
+            for _, detection in group.iterrows()
+        ]
+        row_to_track = _global_assignments(
+            detections_xy,
+            active,
+            timestamp,
+            max_matching_speed_m_s,
+            min_gate_m,
+        )
 
         for row_position, (original_index, detection) in enumerate(group.iterrows()):
             x = float(detection["ground_x_m"])
@@ -83,9 +128,29 @@ def link_detections(
             if row_position in row_to_track:
                 track_id = row_to_track[row_position]
                 track = active[track_id]
+                dt_s = max((timestamp - track.last_timestamp_ms) / 1000.0, 0.0)
+                if dt_s > 0:
+                    measured_vx = (x - track.smooth_x) / dt_s
+                    measured_vy = (y - track.smooth_y) / dt_s
+                    velocity_x = track.velocity_x_m_s + velocity_alpha * (
+                        measured_vx - track.velocity_x_m_s
+                    )
+                    velocity_y = track.velocity_y_m_s + velocity_alpha * (
+                        measured_vy - track.velocity_y_m_s
+                    )
+                else:
+                    velocity_x = track.velocity_x_m_s
+                    velocity_y = track.velocity_y_m_s
                 smooth_x = track.smooth_x + smoothing_alpha * (x - track.smooth_x)
                 smooth_y = track.smooth_y + smoothing_alpha * (y - track.smooth_y)
-                active[track_id] = _TrackState(track_id, timestamp, smooth_x, smooth_y)
+                active[track_id] = _TrackState(
+                    track_id,
+                    timestamp,
+                    smooth_x,
+                    smooth_y,
+                    float(velocity_x),
+                    float(velocity_y),
+                )
             else:
                 track_id = next_track_id
                 next_track_id += 1
