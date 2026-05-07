@@ -40,10 +40,18 @@ Install Python dependencies:
 python -m pip install -r requirements.txt
 ```
 
+Generate the printable ChArUco board and metadata:
+
+```powershell
+python scripts/generate_charuco_board.py --output-dir outputs/charuco_board
+```
+
+Print `outputs/charuco_board/charuco_board.pdf` at 100% scale. Do not use fit-to-page, because the metadata stores the exact board dimensions used by OpenCV calibration.
+
 Run notebooks in this order:
 
 1. `notebooks/01_camera_calibration.ipynb`
-   - Input: manual checkerboard images in `data/calibration_images/checkerboard/`
+   - Input: `outputs/charuco_board/charuco_board.json` and manual ChArUco images in `data/calibration_images/charuco/`
    - Output: `outputs/calibration_intrinsics.json`
 2. `notebooks/02_ground_homography.ipynb`
    - Input: `outputs/calibration_intrinsics.json` and measured markers in `data/ground_markers.csv`

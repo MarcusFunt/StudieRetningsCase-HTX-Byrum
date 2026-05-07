@@ -9,4 +9,5 @@ data/calibration_images/**/*.png
 outputs/**/*.json
 outputs/**/*.csv
 outputs/**/*.png
+outputs/**/*.pdf
 !outputs/README.md

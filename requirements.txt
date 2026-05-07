@@ -1,6 +1,6 @@
 numpy
 pandas
-opencv-python
+opencv-contrib-python
 matplotlib
 jupyter
 pytest

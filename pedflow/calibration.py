@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -8,6 +11,256 @@ import numpy as np
 import pandas as pd
 
 from .geometry import apply_homography, save_calibration, undistort_points
+
+
+DEFAULT_CHARUCO_DICTIONARY = "DICT_5X5_100"
+
+
+def get_aruco_dictionary(dictionary_name: str = DEFAULT_CHARUCO_DICTIONARY) -> cv2.aruco.Dictionary:
+    if not hasattr(cv2, "aruco"):
+        raise RuntimeError("OpenCV ArUco support is unavailable. Install opencv-contrib-python.")
+    if not dictionary_name.startswith("DICT_") or not hasattr(cv2.aruco, dictionary_name):
+        raise ValueError(f"Unknown ArUco dictionary: {dictionary_name}")
+    return cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, dictionary_name))
+
+
+def create_charuco_board(
+    squares_x: int,
+    squares_y: int,
+    square_length_m: float,
+    marker_length_m: float,
+    dictionary_name: str = DEFAULT_CHARUCO_DICTIONARY,
+) -> cv2.aruco.CharucoBoard:
+    if squares_x < 3 or squares_y < 3:
+        raise ValueError("A ChArUco board needs at least 3 squares in each direction")
+    if marker_length_m <= 0 or square_length_m <= 0:
+        raise ValueError("square and marker lengths must be positive")
+    if marker_length_m >= square_length_m:
+        raise ValueError("marker length must be smaller than square length")
+
+    dictionary = get_aruco_dictionary(dictionary_name)
+    return cv2.aruco.CharucoBoard(
+        (int(squares_x), int(squares_y)),
+        float(square_length_m),
+        float(marker_length_m),
+        dictionary,
+    )
+
+
+def charuco_board_from_metadata(metadata: dict) -> cv2.aruco.CharucoBoard:
+    return create_charuco_board(
+        squares_x=int(metadata["squares_x"]),
+        squares_y=int(metadata["squares_y"]),
+        square_length_m=float(metadata["square_length_m"]),
+        marker_length_m=float(metadata["marker_length_m"]),
+        dictionary_name=str(metadata["dictionary"]),
+    )
+
+
+def generate_charuco_board(
+    output_dir: str | Path,
+    squares_x: int = 7,
+    squares_y: int = 5,
+    square_length_mm: float = 35.0,
+    marker_length_mm: float = 25.0,
+    dictionary_name: str = DEFAULT_CHARUCO_DICTIONARY,
+    dpi: int = 300,
+    margin_mm: float = 10.0,
+    basename: str = "charuco_board",
+) -> dict:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    square_length_m = square_length_mm / 1000.0
+    marker_length_m = marker_length_mm / 1000.0
+    board = create_charuco_board(
+        squares_x=squares_x,
+        squares_y=squares_y,
+        square_length_m=square_length_m,
+        marker_length_m=marker_length_m,
+        dictionary_name=dictionary_name,
+    )
+
+    board_width_mm = squares_x * square_length_mm
+    board_height_mm = squares_y * square_length_mm
+    total_width_mm = board_width_mm + margin_mm * 2.0
+    total_height_mm = board_height_mm + margin_mm * 2.0
+    width_px = int(round(total_width_mm / 25.4 * dpi))
+    height_px = int(round(total_height_mm / 25.4 * dpi))
+    margin_px = int(round(margin_mm / 25.4 * dpi))
+
+    image = board.generateImage((width_px, height_px), marginSize=margin_px, borderBits=1)
+
+    png_path = output_path / f"{basename}.png"
+    pdf_path = output_path / f"{basename}.pdf"
+    metadata_path = output_path / f"{basename}.json"
+
+    if not cv2.imwrite(str(png_path), image):
+        raise OSError(f"Could not write {png_path}")
+
+    fig = plt.figure(figsize=(total_width_mm / 25.4, total_height_mm / 25.4), dpi=dpi)
+    ax = fig.add_axes((0, 0, 1, 1))
+    ax.imshow(image, cmap="gray", vmin=0, vmax=255)
+    ax.axis("off")
+    fig.savefig(pdf_path, dpi=dpi)
+    plt.close(fig)
+
+    metadata = {
+        "schema_version": 1,
+        "board_type": "charuco",
+        "created_utc": datetime.now(timezone.utc).isoformat(),
+        "opencv_version": cv2.__version__,
+        "dictionary": dictionary_name,
+        "squares_x": int(squares_x),
+        "squares_y": int(squares_y),
+        "charuco_corners_x": int(squares_x - 1),
+        "charuco_corners_y": int(squares_y - 1),
+        "square_length_m": float(square_length_m),
+        "marker_length_m": float(marker_length_m),
+        "square_length_mm": float(square_length_mm),
+        "marker_length_mm": float(marker_length_mm),
+        "board_width_m": float(board_width_mm / 1000.0),
+        "board_height_m": float(board_height_mm / 1000.0),
+        "margin_mm": float(margin_mm),
+        "margin_px": int(margin_px),
+        "dpi": int(dpi),
+        "image_width_px": int(width_px),
+        "image_height_px": int(height_px),
+        "marker_count": int(len(board.getIds())),
+        "png_path": str(png_path),
+        "pdf_path": str(pdf_path),
+        "metadata_path": str(metadata_path),
+        "png_sha256": hashlib.sha256(png_path.read_bytes()).hexdigest(),
+        "print_instructions": "Print the PDF at 100% scale. Do not fit-to-page or shrink-to-margins.",
+        "privacy_note": (
+            "This board is for manual geometry calibration only. Calibration images should avoid "
+            "pedestrians and should be deleted after calibration JSON has been verified."
+        ),
+    }
+
+    with metadata_path.open("w", encoding="utf-8") as file:
+        json.dump(metadata, file, indent=2)
+        file.write("\n")
+
+    return metadata
+
+
+def detect_charuco_image_points(
+    image: np.ndarray,
+    board: cv2.aruco.CharucoBoard,
+    min_corners: int = 8,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+    detector = cv2.aruco.CharucoDetector(board)
+    charuco_corners, charuco_ids, _, marker_ids = detector.detectBoard(gray)
+    marker_count = 0 if marker_ids is None else int(len(marker_ids))
+
+    if charuco_corners is None or charuco_ids is None or len(charuco_ids) < min_corners:
+        raise ValueError(f"Detected fewer than {min_corners} ChArUco corners")
+
+    object_points, image_points = board.matchImagePoints(charuco_corners, charuco_ids)
+    return object_points.astype(np.float32), image_points.astype(np.float32), marker_count
+
+
+def calibrate_camera_from_charuco(
+    image_paths: Iterable[str | Path],
+    board_metadata_path: str | Path,
+    min_corners: int = 8,
+) -> dict:
+    with Path(board_metadata_path).open("r", encoding="utf-8") as file:
+        board_metadata = json.load(file)
+
+    board = charuco_board_from_metadata(board_metadata)
+    object_points: list[np.ndarray] = []
+    image_points: list[np.ndarray] = []
+    used_images: list[str] = []
+    detected_corner_counts: list[int] = []
+    detected_marker_counts: list[int] = []
+    image_size: tuple[int, int] | None = None
+
+    for image_path in image_paths:
+        path = Path(image_path)
+        image = cv2.imread(str(path))
+        if image is None:
+            continue
+
+        current_image_size = (int(image.shape[1]), int(image.shape[0]))
+        if image_size is None:
+            image_size = current_image_size
+        elif image_size != current_image_size:
+            raise ValueError("All ChArUco calibration images must have the same resolution")
+
+        try:
+            obj_points, img_points, marker_count = detect_charuco_image_points(
+                image,
+                board,
+                min_corners=min_corners,
+            )
+        except ValueError:
+            continue
+
+        object_points.append(obj_points)
+        image_points.append(img_points)
+        used_images.append(str(path))
+        detected_corner_counts.append(int(len(img_points)))
+        detected_marker_counts.append(marker_count)
+
+    if image_size is None:
+        raise ValueError("No ChArUco calibration images could be read")
+    if len(object_points) < 3:
+        raise ValueError("At least 3 usable ChArUco calibration images are required")
+
+    rms, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(
+        object_points,
+        image_points,
+        image_size,
+        None,
+        None,
+    )
+
+    per_image_errors = []
+    for obj_points, img_points, rvec, tvec in zip(object_points, image_points, rvecs, tvecs):
+        projected, _ = cv2.projectPoints(obj_points, rvec, tvec, camera_matrix, dist_coeffs)
+        error = cv2.norm(img_points, projected, cv2.NORM_L2) / len(projected)
+        per_image_errors.append(float(error))
+
+    return {
+        "image_width": int(image_size[0]),
+        "image_height": int(image_size[1]),
+        "K": camera_matrix.tolist(),
+        "dist": dist_coeffs.reshape(-1).tolist(),
+        "calibration_board_type": "charuco",
+        "charuco_board_metadata_path": str(board_metadata_path),
+        "charuco_board": {
+            key: board_metadata[key]
+            for key in [
+                "dictionary",
+                "squares_x",
+                "squares_y",
+                "square_length_m",
+                "marker_length_m",
+                "board_width_m",
+                "board_height_m",
+                "marker_count",
+            ]
+            if key in board_metadata
+        },
+        "min_charuco_corners_per_image": int(min_corners),
+        "detected_charuco_corners_per_image": detected_corner_counts,
+        "detected_aruco_markers_per_image": detected_marker_counts,
+        "rms_reprojection_error_px": float(rms),
+        "per_image_reprojection_error_px": per_image_errors,
+        "used_images": used_images,
+        "calibration_notes": (
+            "ChArUco images were manually captured for geometry calibration only. "
+            "Delete calibration images after this file has been verified."
+        ),
+    }
 
 
 def checkerboard_object_points(pattern_size: tuple[int, int], square_size_m: float) -> np.ndarray:
