@@ -52,30 +52,118 @@ hv.extension("bokeh")
 
 _UI_CSS = """
 :root {
-  --pedflow-bg: #f4f7f6;
+  --pedflow-bg: #f3f6f8;
+  --pedflow-bg-strong: #eaf1f3;
   --pedflow-panel: #ffffff;
   --pedflow-ink: #152029;
-  --pedflow-muted: #62717d;
-  --pedflow-line: #d8e1e5;
-  --pedflow-accent: #1f7a83;
+  --pedflow-muted: #5a6977;
+  --pedflow-line: #d5e0e5;
+  --pedflow-line-strong: #b9c9d0;
+  --pedflow-accent: #24787f;
+  --pedflow-accent-strong: #176168;
+  --pedflow-focus: #90d0d3;
 }
 body {
   background: var(--pedflow-bg);
   color: var(--pedflow-ink);
   font-family: Inter, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 }
+.bk-FastListTemplate {
+  background: var(--pedflow-bg);
+}
+#header {
+  box-shadow: 0 8px 24px rgba(15, 29, 38, 0.14);
+}
+#header .title {
+  font-weight: 720;
+  letter-spacing: 0;
+}
+.bk-btn-primary {
+  background-color: var(--pedflow-accent) !important;
+  border-color: var(--pedflow-accent) !important;
+  border-radius: 7px !important;
+  box-shadow: 0 8px 18px rgba(36, 120, 127, 0.16);
+  font-weight: 700 !important;
+}
+.bk-btn-primary:hover,
+.bk-btn-primary:focus {
+  background-color: var(--pedflow-accent-strong) !important;
+  border-color: var(--pedflow-accent-strong) !important;
+}
 .pedflow-layout {
+  align-items: flex-start;
   gap: 18px;
 }
 .pedflow-controls {
   background: var(--pedflow-panel);
   border: 1px solid var(--pedflow-line);
   border-radius: 8px;
-  padding: 18px;
+  box-sizing: border-box;
+  box-shadow: 0 10px 26px rgba(21, 32, 41, 0.05);
+  min-width: 0;
+  padding: 18px 18px 20px;
+}
+.pedflow-section-title {
+  border-bottom: 1px solid var(--pedflow-line);
+  margin: -2px 0 12px;
+  padding-bottom: 11px;
+}
+.pedflow-section-title strong {
+  color: var(--pedflow-ink);
+  display: block;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+.pedflow-section-title span {
+  color: var(--pedflow-muted);
+  display: block;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  margin-top: 3px;
+  text-transform: uppercase;
+}
+.pedflow-preview {
+  background: #f8fbfc;
+  border: 1px dashed var(--pedflow-line-strong);
+  border-radius: 8px;
+  min-height: 246px;
+  overflow: hidden;
+  padding: 14px;
+}
+.pedflow-preview-empty {
+  align-items: center;
+  color: var(--pedflow-muted);
+  display: flex;
+  font-size: 13px;
+  font-weight: 650;
+  justify-content: center;
+  min-height: 214px;
+  text-align: center;
+}
+.pedflow-board-image img {
+  background: #ffffff;
+  border: 1px solid var(--pedflow-line);
+  border-radius: 6px;
+  box-shadow: 0 8px 20px rgba(21, 32, 41, 0.08);
+  object-fit: contain;
+}
+.pedflow-controls .bk-input,
+.pedflow-controls input[type="text"],
+.pedflow-controls input[type="number"],
+.pedflow-controls input[type="file"] {
+  border-color: var(--pedflow-line-strong) !important;
+  border-radius: 6px !important;
+}
+.pedflow-controls .bk-input:focus,
+.pedflow-controls input:focus {
+  border-color: var(--pedflow-accent) !important;
+  box-shadow: 0 0 0 3px var(--pedflow-focus) !important;
 }
 .pedflow-empty {
   align-items: center;
-  background: linear-gradient(180deg, #f8fbfb 0%, #eef5f5 100%);
+  background: linear-gradient(180deg, #fbfdfd 0%, var(--pedflow-bg-strong) 100%);
   border: 1px solid var(--pedflow-line);
   border-radius: 8px;
   color: var(--pedflow-muted);
@@ -100,6 +188,7 @@ body {
   border: 1px solid var(--pedflow-line);
   border-left: 4px solid var(--pedflow-accent);
   border-radius: 8px;
+  box-shadow: 0 10px 26px rgba(21, 32, 41, 0.04);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -134,6 +223,7 @@ body {
   background: #ffffff;
   border: 1px solid var(--pedflow-line);
   border-radius: 8px;
+  box-shadow: 0 10px 26px rgba(21, 32, 41, 0.04);
   min-height: 118px;
   padding: 18px 18px 16px;
 }
@@ -160,7 +250,13 @@ body {
   margin-left: 4px;
 }
 .pedflow-tabs .bk-tab {
-  font-weight: 650;
+  color: var(--pedflow-muted);
+  font-weight: 700;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+.pedflow-tabs .bk-tab.bk-active {
+  color: var(--pedflow-accent-strong);
 }
 @media (max-width: 1100px) {
   .pedflow-metrics {
@@ -168,6 +264,52 @@ body {
   }
 }
 @media (max-width: 720px) {
+  #header .title {
+    display: block;
+    flex: 1 1 auto !important;
+    font-size: 18px !important;
+    line-height: 1.15 !important;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #header #header-items {
+    flex: 0 0 8px !important;
+    width: 8px !important;
+  }
+  #header .pn-toggle-theme {
+    flex: 0 0 85px !important;
+  }
+  #header .app-header {
+    flex: 1 1 auto !important;
+    max-width: calc(100vw - 118px);
+    min-width: 0;
+  }
+  #header .pn-busy-container {
+    display: none !important;
+  }
+  .bk-FastListTemplate .bk-main {
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+  }
+  .pedflow-layout {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 14px;
+  }
+  .pedflow-layout > *,
+  .pedflow-controls {
+    flex: 1 1 auto !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+  .pedflow-tabs .bk-tab {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
   .pedflow-metrics {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -208,6 +350,25 @@ def _empty_plot(message: str) -> pn.pane.HTML:
         </div>
         """,
         styles={"min-height": "360px"},
+    )
+
+
+def _section_title(title: str, eyebrow: str) -> pn.pane.HTML:
+    return pn.pane.HTML(
+        f"""
+        <div class="pedflow-section-title">
+          <strong>{html.escape(title)}</strong>
+          <span>{html.escape(eyebrow)}</span>
+        </div>
+        """,
+        margin=(0, 0, 2, 0),
+    )
+
+
+def _preview_empty(message: str) -> pn.pane.HTML:
+    return pn.pane.HTML(
+        f'<div class="pedflow-preview-empty">{html.escape(message)}</div>',
+        sizing_mode="stretch_width",
     )
 
 
@@ -406,6 +567,7 @@ class AnalysisPanel:
 
     def panel(self) -> pn.Column:
         input_controls = pn.Column(
+            _section_title("Data sources", "Files"),
             self.detections_path,
             self.detections_upload,
             self.calibration_path,
@@ -417,6 +579,7 @@ class AnalysisPanel:
             sizing_mode="stretch_width",
         )
         tracking_controls = pn.Column(
+            _section_title("Tracking filters", "Association"),
             self.confidence_threshold,
             self.max_matching_speed,
             self.close_after,
@@ -427,6 +590,7 @@ class AnalysisPanel:
             sizing_mode="stretch_width",
         )
         metric_controls = pn.Column(
+            _section_title("Metric windows", "Aggregation"),
             self.speed_window,
             self.stop_speed_threshold,
             self.stop_duration_threshold,
@@ -654,6 +818,12 @@ class CalibrationPanel:
         self.calibrate_intrinsics_button.on_click(self._on_calibrate_intrinsics)
         self.compute_homography_button.on_click(self._on_compute_homography)
 
+        self.board_preview = pn.Column(css_classes=["pedflow-preview"], sizing_mode="stretch_width")
+        self._refresh_board_preview(
+            _resolve_path(self.project_root, self.board_output_dir.value)
+            / f"{self.board_basename.value}.png"
+        )
+
     def panel(self) -> pn.Tabs:
         return pn.Tabs(
             ("ChArUco Board", self._board_panel()),
@@ -667,12 +837,16 @@ class CalibrationPanel:
         return pn.Column(
             pn.Row(
                 pn.Column(
+                    _section_title("Board output", "ChArUco"),
                     self.board_output_dir,
                     self.board_basename,
                     self.dictionary,
+                    _section_title("Current board", "Preview"),
+                    self.board_preview,
                     css_classes=["pedflow-controls"],
                 ),
                 pn.Column(
+                    _section_title("Board geometry", "Print"),
                     self.squares_x,
                     self.squares_y,
                     self.square_length_mm,
@@ -691,6 +865,7 @@ class CalibrationPanel:
         return pn.Column(
             pn.Row(
                 pn.Column(
+                    _section_title("Image set", "Intrinsics"),
                     self.image_dir,
                     self.board_metadata_path,
                     self.intrinsics_output_path,
@@ -707,6 +882,7 @@ class CalibrationPanel:
         return pn.Column(
             pn.Row(
                 pn.Column(
+                    _section_title("Marker mapping", "Homography"),
                     self.intrinsics_path,
                     self.markers_csv,
                     self.calibration_output_path,
@@ -741,11 +917,24 @@ class CalibrationPanel:
                 f"{_display_path(self.project_root, output_dir)}. "
                 f"Board size: {metadata['board_width_m']:.3f} m x {metadata['board_height_m']:.3f} m."
             )
+            self._refresh_board_preview(output_dir / f"{self.board_basename.value}.png")
             self.board_status.object = _status_html("Complete", message, kind="success")
         except Exception as exc:
             self.board_status.object = _status_html("Board generation failed", str(exc), kind="danger")
         finally:
             self.generate_board_button.loading = False
+
+    def _refresh_board_preview(self, image_path: Path) -> None:
+        if image_path.exists():
+            preview = pn.pane.PNG(
+                str(image_path),
+                height=214,
+                sizing_mode="scale_width",
+                css_classes=["pedflow-board-image"],
+            )
+        else:
+            preview = _preview_empty("Board preview appears after generation.")
+        self.board_preview[:] = [preview]
 
     def _on_calibrate_intrinsics(self, _event: object) -> None:
         self.calibrate_intrinsics_button.loading = True
