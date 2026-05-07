@@ -1,7 +1,13 @@
 numpy
 pandas
+pedpy
 opencv-contrib-python
 matplotlib
-jupyter
+panel
+holoviews
+hvplot
+pyviz-comms
+notebook
+ipykernel
 pytest
 pyserial

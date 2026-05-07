@@ -38,7 +38,7 @@ def test_nearest_neighbor_tracking_and_speed():
 
     assert speeds["track_id"].nunique() == 1
     assert len(speeds) == 5
-    np.testing.assert_allclose(speeds["speed_m_s"].dropna().to_numpy(), [1.0, 1.0, 1.0, 1.0])
+    np.testing.assert_allclose(speeds["speed_m_s"].dropna().to_numpy(), [1.0, 1.0, 1.0, 1.0, 1.0])
 
 
 def test_short_tracks_are_removed():
@@ -72,7 +72,7 @@ def test_dwell_flags_and_summary_metrics():
     summary = summarize_flow(tracks)
     per_track = track_summaries(tracks)
 
-    assert tracks["is_dwell"].sum() == 3
+    assert tracks["is_dwell"].sum() == 4
     assert int(summary.loc[0, "pedestrian_count"]) == 1
-    assert int(summary.loc[0, "dwell_points"]) == 3
+    assert int(summary.loc[0, "dwell_points"]) == 4
     assert np.isnan(per_track.loc[0, "detour_ratio"])

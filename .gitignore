@@ -1,7 +1,9 @@
 __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
+.venv/
 
+data/ground_markers.csv
 data/detections/*.csv
 data/calibration_images/**/*.jpg
 data/calibration_images/**/*.jpeg

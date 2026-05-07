@@ -34,7 +34,15 @@ Change `COM5` to the XIAO serial port.
 
 ## Offline Workflow
 
-Install Python dependencies:
+Install and set up the project:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+```
+
+The setup script creates `.venv`, installs Python dependencies, prepares local data/output folders, copies `data/ground_markers_template.csv` to `data/ground_markers.csv` if needed, generates the printable ChArUco board, and runs the tests.
+
+If you prefer to run the steps manually, install Python dependencies:
 
 ```powershell
 python -m pip install -r requirements.txt
@@ -71,13 +79,30 @@ distorted bbox foot point -> undistort point -> homography -> ground x/y meters
 The analysis exports interpretable sub-metrics instead of one fake quality score:
 
 - pedestrian count and people per minute/hour
-- position heatmap and path/desire-line plot
-- median speed heatmap
+- PedPy-backed position heatmap and path/desire-line plot
+- PedPy-backed median speed heatmap
 - stop/dwell map
 - bottleneck index
 - detour ratio and direction-change summaries
 
 Direction changes are not treated as proof that a street is good or bad. They can also indicate obstacles, confusion, crowding, or tracking noise.
+
+## Panel/HoloViz GUI
+
+Start the local dashboard:
+
+```powershell
+.\.venv\Scripts\python.exe -m panel serve pedflow/gui.py --show --autoreload
+```
+
+The GUI lets you choose or upload the anonymous detections CSV and calibration JSON, tune the tracking and metric settings, view HoloViews/hvPlot paths and heatmaps, inspect Tabulator tables, and write the same CSV/PNG outputs to `outputs/analysis/`.
+
+The `Jupyter` tab can start a local token-protected Jupyter server and embed the project notebooks in the dashboard. If you serve Panel on a port other than the default `http://localhost:5006`, set the iframe origin first:
+
+```powershell
+$env:PEDFLOW_PANEL_ORIGIN = "http://localhost:5007"
+.\.venv\Scripts\python.exe -m panel serve pedflow/gui.py --port 5007 --show
+```
 
 ## Limitations
 
