@@ -9,11 +9,9 @@ def test_field_firmware_has_no_live_stream_or_image_capture_api():
     lower_source = source.lower()
 
     forbidden = [
-        "#include <wifi.h>",
         "#include <webserver.h>",
         "wifiserver",
         "webserver",
-        "softap",
         "server.on",
         "stream",
         "last_image",
@@ -33,3 +31,14 @@ def test_field_firmware_invokes_detection_without_image_payloads():
     assert "timestamp_ms,frame_id,detection_id,bbox_x,bbox_y,bbox_w,bbox_h,confidence,target" in source
     assert "#error,ai_invoke_failed" in source
     assert "ai_begin_failed" in source
+
+
+def test_field_firmware_sends_anonymous_rows_over_wifi_udp():
+    source = SKETCH.read_text(encoding="utf-8")
+
+    assert "#include <WiFi.h>" in source
+    assert "#include <WiFiUdp.h>" in source
+    assert "WiFi.softAP(" in source
+    assert "udp.beginPacket(WIFI_UDP_BROADCAST, WIFI_UDP_PORT)" in source
+    assert "PedFlowSensor" in source
+    assert "4210" in source
