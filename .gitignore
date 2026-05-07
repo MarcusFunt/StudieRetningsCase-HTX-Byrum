@@ -1,0 +1,12 @@
+__pycache__/
+.pytest_cache/
+.ipynb_checkpoints/
+
+data/detections/*.csv
+data/calibration_images/**/*.jpg
+data/calibration_images/**/*.jpeg
+data/calibration_images/**/*.png
+outputs/**/*.json
+outputs/**/*.csv
+outputs/**/*.png
+!outputs/README.md
