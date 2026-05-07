@@ -3,7 +3,6 @@ import pandas as pd
 
 from pedflow.geometry import detections_to_ground
 from pedflow.metrics import add_dwell_flags, estimate_speeds, summarize_flow
-from pedflow.plotting import write_standard_plots
 from pedflow.tracking import filter_short_tracks, link_detections
 
 
@@ -44,15 +43,8 @@ def test_synthetic_end_to_end_pipeline_counts_two_people_and_writes_plots(tmp_pa
     tracks = estimate_speeds(tracks, window_s=0.75)
     tracks = add_dwell_flags(tracks)
     summary = summarize_flow(tracks)
-    write_standard_plots(tracks, tmp_path, grid_size_m=0.5)
 
     assert len(ground) == 10
     assert tracks["track_id"].nunique() == 2
     assert int(summary.loc[0, "pedestrian_count"]) == 2
     assert summary.loc[0, "median_speed_m_s"] > 0.0
-    assert (tmp_path / "paths_desire_lines.png").exists()
-    assert (tmp_path / "position_heatmap.png").exists()
-    assert (tmp_path / "speed_heatmap.png").exists()
-    assert (tmp_path / "count_over_time.png").exists()
-    assert (tmp_path / "dwell_map.png").exists()
-    assert (tmp_path / "bottleneck_map.png").exists()

@@ -1,6 +1,6 @@
 # ChArUco Calibration Images
 
-Place manually captured ChArUco board images here while running `notebooks/01_camera_calibration.ipynb`.
+Place manually captured ChArUco board images here before using the Panel calibration tab.
 
 Generate the printable board and metadata with:
 

@@ -45,5 +45,9 @@ def test_run_flow_analysis_returns_tables_and_writes_outputs(tmp_path):
     assert int(result.summary.loc[0, "pedestrian_count"]) == 2
     assert result.track_summaries["track_id"].tolist() == [1, 2]
     assert not result.grid.empty
+    assert (tmp_path / "detections_ground.csv").exists()
+    assert (tmp_path / "tracks.csv").exists()
+    assert (tmp_path / "track_summaries.csv").exists()
     assert (tmp_path / "summary_metrics.csv").exists()
-    assert (tmp_path / "paths_desire_lines.png").exists()
+    assert (tmp_path / "grid_metrics.csv").exists()
+    assert not list(tmp_path.glob("*.png"))

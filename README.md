@@ -32,9 +32,9 @@ python scripts/capture_serial.py --port COM5 --output data/detections/session.cs
 
 Change `COM5` to the XIAO serial port.
 
-## Offline Workflow
+## Setup
 
-Install and set up the project:
+Install and prepare the project:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\setup.ps1
@@ -42,31 +42,32 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1
 
 The setup script creates `.venv`, installs Python dependencies, prepares local data/output folders, copies `data/ground_markers_template.csv` to `data/ground_markers.csv` if needed, generates the printable ChArUco board, and runs the tests.
 
-If you prefer to run the steps manually, install Python dependencies:
+Manual dependency install:
 
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-Generate the printable ChArUco board and metadata:
+Start the local Panel dashboard:
+
+```powershell
+.\.venv\Scripts\python.exe -m panel serve pedflow/gui.py --show --autoreload
+```
+
+## Panel Dashboard
+
+The dashboard is the supported workflow. It has two top-level tabs:
+
+- `Analysis`: choose or upload the anonymous detections CSV and calibration JSON, tune tracking and PedPy metric settings, view HoloViews/hvPlot paths and heatmaps, inspect Tabulator tables, and optionally write processed CSV outputs to `outputs/analysis/`.
+- `Calibration`: generate the printable ChArUco board, calibrate camera intrinsics from manually captured ChArUco images, and combine intrinsics with `data/ground_markers.csv` into `outputs/calibration.json`.
+
+Generate the printable ChArUco board from the command line if needed:
 
 ```powershell
 python scripts/generate_charuco_board.py --output-dir outputs/charuco_board
 ```
 
 Print `outputs/charuco_board/charuco_board.pdf` at 100% scale. Do not use fit-to-page, because the metadata stores the exact board dimensions used by OpenCV calibration.
-
-Run notebooks in this order:
-
-1. `notebooks/01_camera_calibration.ipynb`
-   - Input: `outputs/charuco_board/charuco_board.json` and manual ChArUco images in `data/calibration_images/charuco/`
-   - Output: `outputs/calibration_intrinsics.json`
-2. `notebooks/02_ground_homography.ipynb`
-   - Input: `outputs/calibration_intrinsics.json` and measured markers in `data/ground_markers.csv`
-   - Output: `outputs/calibration.json`
-3. `notebooks/03_flow_analysis.ipynb`
-   - Input: `data/detections/session.csv` and `outputs/calibration.json`
-   - Outputs: processed CSVs, plots, and summary tables in `outputs/analysis/`
 
 Geometry order is always:
 
@@ -86,23 +87,6 @@ The analysis exports interpretable sub-metrics instead of one fake quality score
 - detour ratio and direction-change summaries
 
 Direction changes are not treated as proof that a street is good or bad. They can also indicate obstacles, confusion, crowding, or tracking noise.
-
-## Panel/HoloViz GUI
-
-Start the local dashboard:
-
-```powershell
-.\.venv\Scripts\python.exe -m panel serve pedflow/gui.py --show --autoreload
-```
-
-The GUI lets you choose or upload the anonymous detections CSV and calibration JSON, tune the tracking and metric settings, view HoloViews/hvPlot paths and heatmaps, inspect Tabulator tables, and write the same CSV/PNG outputs to `outputs/analysis/`.
-
-The `Jupyter` tab can start a local token-protected Jupyter server and embed the project notebooks in the dashboard. If you serve Panel on a port other than the default `http://localhost:5006`, set the iframe origin first:
-
-```powershell
-$env:PEDFLOW_PANEL_ORIGIN = "http://localhost:5007"
-.\.venv\Scripts\python.exe -m panel serve pedflow/gui.py --port 5007 --show
-```
 
 ## Limitations
 

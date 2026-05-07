@@ -3,14 +3,6 @@ from __future__ import annotations
 import html
 import io
 import json
-import os
-import secrets
-import subprocess
-import sys
-import tempfile
-import time
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
 import holoviews as hv
@@ -26,7 +18,14 @@ try:
         run_flow_analysis,
         write_analysis_outputs,
     )
-    from .geometry import load_calibration
+    from .calibration import (
+        compute_ground_homography,
+        calibrate_camera_from_charuco,
+        generate_charuco_board,
+        merge_and_save_calibration,
+        read_marker_csv,
+    )
+    from .geometry import load_calibration, save_calibration
 except ImportError:
     from pedflow.analysis import (
         FlowAnalysisResult,
@@ -34,15 +33,17 @@ except ImportError:
         run_flow_analysis,
         write_analysis_outputs,
     )
-    from pedflow.geometry import load_calibration
+    from pedflow.calibration import (
+        compute_ground_homography,
+        calibrate_camera_from_charuco,
+        generate_charuco_board,
+        merge_and_save_calibration,
+        read_marker_csv,
+    )
+    from pedflow.geometry import load_calibration, save_calibration
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-NOTEBOOK_OPTIONS = {
-    "Flow analysis": "notebooks/03_flow_analysis.ipynb",
-    "Ground homography": "notebooks/02_ground_homography.ipynb",
-    "Camera calibration": "notebooks/01_camera_calibration.ipynb",
-}
 
 pn.extension("tabulator")
 pn.config.sizing_mode = "stretch_width"
@@ -57,21 +58,20 @@ _UI_CSS = """
   --pedflow-muted: #62717d;
   --pedflow-line: #d8e1e5;
   --pedflow-accent: #1f7a83;
-  --pedflow-accent-dark: #155b62;
-  --pedflow-soft: #e8f6f7;
-  --pedflow-warn: #f4a261;
 }
 body {
   background: var(--pedflow-bg);
   color: var(--pedflow-ink);
   font-family: Inter, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 }
-.pedflow-section-title h2,
-.pedflow-section-title h3 {
-  color: var(--pedflow-ink);
-  font-weight: 700;
-  letter-spacing: 0;
-  margin: 0;
+.pedflow-layout {
+  gap: 18px;
+}
+.pedflow-controls {
+  background: var(--pedflow-panel);
+  border: 1px solid var(--pedflow-line);
+  border-radius: 8px;
+  padding: 18px;
 }
 .pedflow-empty {
   align-items: center;
@@ -159,26 +159,8 @@ body {
   font-weight: 600;
   margin-left: 4px;
 }
-.pedflow-main-tabs .bk-tab {
+.pedflow-tabs .bk-tab {
   font-weight: 650;
-}
-.pedflow-sidebar-title h2 {
-  color: var(--pedflow-ink);
-  font-size: 18px;
-  margin: 14px 0 8px;
-}
-.pedflow-sidebar-title h3 {
-  color: var(--pedflow-muted);
-  font-size: 13px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  margin: 16px 0 8px;
-  text-transform: uppercase;
-}
-.pedflow-sidebar-divider {
-  background: var(--pedflow-line);
-  height: 1px;
-  margin: 14px 0 6px;
 }
 @media (max-width: 1100px) {
   .pedflow-metrics {
@@ -217,7 +199,7 @@ def _rounded_frame(frame: pd.DataFrame, digits: int = 3) -> pd.DataFrame:
     return frame.round(digits)
 
 
-def _empty_plot(message: str) -> pn.pane.Markdown:
+def _empty_plot(message: str) -> pn.pane.HTML:
     return pn.pane.HTML(
         f"""
         <div class="pedflow-empty">
@@ -225,13 +207,11 @@ def _empty_plot(message: str) -> pn.pane.Markdown:
           <span>Waiting for analysis results.</span>
         </div>
         """,
-        styles={
-            "min-height": "360px",
-        },
+        styles={"min-height": "360px"},
     )
 
 
-def _paths_plot(tracks: pd.DataFrame) -> hv.core.Dimensioned | pn.pane.Markdown:
+def _paths_plot(tracks: pd.DataFrame) -> hv.core.Dimensioned | pn.pane.HTML:
     if tracks.empty:
         return _empty_plot("No path data yet")
 
@@ -251,7 +231,7 @@ def _paths_plot(tracks: pd.DataFrame) -> hv.core.Dimensioned | pn.pane.Markdown:
     return plot.opts(responsive=True, aspect="equal", show_grid=True)
 
 
-def _count_plot(tracks: pd.DataFrame, bin_seconds: int = 60) -> hv.core.Dimensioned | pn.pane.Markdown:
+def _count_plot(tracks: pd.DataFrame, bin_seconds: int = 60) -> hv.core.Dimensioned | pn.pane.HTML:
     if tracks.empty:
         return _empty_plot("No count data yet")
 
@@ -283,7 +263,7 @@ def _heatmap_plot(
     title: str,
     color_label: str,
     cmap: str,
-) -> hv.core.Dimensioned | pn.pane.Markdown:
+) -> hv.core.Dimensioned | pn.pane.HTML:
     if grid.empty or value_col not in grid.columns:
         return _empty_plot(f"No {title.lower()} data yet")
 
@@ -313,201 +293,49 @@ def _bottleneck_grid(grid: pd.DataFrame) -> pd.DataFrame:
     return output
 
 
-class JupyterEmbed:
-    def __init__(self, project_root: Path) -> None:
-        self.project_root = project_root
-        self.process: subprocess.Popen | None = None
-        self.config_path: Path | None = None
-        self.token = ""
+def _indicator_value(value: object) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if np.isnan(number):
+        return 0.0
+    return number
 
-        self.notebook = pn.widgets.Select(
-            name="Notebook",
-            options=NOTEBOOK_OPTIONS,
-            value=NOTEBOOK_OPTIONS["Flow analysis"],
-        )
-        self.port = pn.widgets.IntInput(name="Jupyter port", value=8888, start=1024, end=65535)
-        self.manual_url = pn.widgets.TextInput(
-            name="Jupyter URL",
-            placeholder="http://127.0.0.1:8888/notebooks/notebooks/03_flow_analysis.ipynb?token=...",
-        )
-        self.start_button = pn.widgets.Button(name="Start embedded Jupyter", button_type="primary")
-        self.stop_button = pn.widgets.Button(name="Stop", button_type="light")
-        self.load_button = pn.widgets.Button(name="Load URL", button_type="light")
-        self.status = pn.pane.Alert(
-            "Start Jupyter here, or paste an existing local Jupyter URL.",
-            alert_type="info",
-        )
-        self.frame = pn.pane.HTML(self._frame_html(""), height=760, sanitize_html=False)
 
-        self.start_button.on_click(self._on_start)
-        self.stop_button.on_click(self._on_stop)
-        self.load_button.on_click(self._on_load)
-
-    def panel(self) -> pn.Column:
-        controls = pn.Row(
-            self.notebook,
-            self.port,
-            pn.Column(pn.Spacer(height=20), self.start_button, width=190),
-            pn.Column(pn.Spacer(height=20), self.stop_button, width=80),
-        )
-        return pn.Column(
-            pn.pane.Markdown(
-                "Use this tab for the original notebooks without leaving the dashboard. "
-                "The embedded server is local-only and protected with a generated token."
-            ),
-            controls,
-            pn.Row(self.manual_url, pn.Column(pn.Spacer(height=20), self.load_button, width=90)),
-            self.status,
-            self.frame,
-        )
-
-    def _on_start(self, _event: object) -> None:
-        try:
-            url = self.start()
-        except Exception as exc:
-            self.status.object = f"Could not start Jupyter: {exc}"
-            self.status.alert_type = "danger"
-            return
-
-        self.manual_url.value = url
-        self.frame.object = self._frame_html(url)
-        self.status.object = f"Embedded Jupyter is running on port {self.port.value}."
-        self.status.alert_type = "success"
-
-    def _on_stop(self, _event: object) -> None:
-        self.stop()
-        self.frame.object = self._frame_html("")
-        self.status.object = "Embedded Jupyter stopped."
-        self.status.alert_type = "info"
-
-    def _on_load(self, _event: object) -> None:
-        self.frame.object = self._frame_html(self.manual_url.value.strip())
-        self.status.object = "Loaded the supplied Jupyter URL in the embedded frame."
-        self.status.alert_type = "info"
-
-    def start(self) -> str:
-        if self.process is not None and self.process.poll() is None:
-            return self._notebook_url()
-
-        self.stop()
-        self.token = secrets.token_urlsafe(24)
-        self.config_path = self._write_config()
-        command = [sys.executable, "-m", "notebook", "--config", str(self.config_path)]
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
-
-        self.process = subprocess.Popen(
-            command,
-            cwd=self.project_root,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=creationflags,
-        )
-
-        self._wait_until_ready()
-        return self._notebook_url()
-
-    def stop(self) -> None:
-        if self.process is not None and self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait(timeout=5)
-        self.process = None
-
-        if self.config_path is not None:
-            try:
-                self.config_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-        self.config_path = None
-
-    def _write_config(self) -> Path:
-        panel_origin = os.environ.get("PEDFLOW_PANEL_ORIGIN", "http://localhost:5006")
-        frame_ancestors = f"frame-ancestors {panel_origin} http://localhost:5006 http://127.0.0.1:5006 'self'"
-        config = "\n".join(
-            [
-                f"c.ServerApp.root_dir = {str(self.project_root)!r}",
-                "c.ServerApp.ip = '127.0.0.1'",
-                f"c.ServerApp.port = {int(self.port.value)}",
-                "c.ServerApp.port_retries = 0",
-                "c.ServerApp.open_browser = False",
-                f"c.ServerApp.token = {self.token!r}",
-                "c.ServerApp.password = ''",
-                "c.ServerApp.disable_check_xsrf = False",
-                "c.ServerApp.tornado_settings = {",
-                "    'headers': {",
-                f"        'Content-Security-Policy': {frame_ancestors!r}",
-                "    }",
-                "}",
-                "",
-            ]
-        )
-        handle = tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            suffix="_pedflow_jupyter_config.py",
-            delete=False,
-        )
-        with handle:
-            handle.write(config)
-        return Path(handle.name)
-
-    def _wait_until_ready(self) -> None:
-        status_url = f"http://127.0.0.1:{int(self.port.value)}/api/status?token={self.token}"
-        deadline = time.monotonic() + 15
-        last_error: Exception | None = None
-
-        while time.monotonic() < deadline:
-            if self.process is not None and self.process.poll() is not None:
-                raise RuntimeError(
-                    f"Jupyter exited early with code {self.process.returncode}. "
-                    "The port may already be in use."
-                )
-            try:
-                with urllib.request.urlopen(status_url, timeout=1) as response:
-                    if response.status < 500:
-                        return
-            except Exception as exc:
-                last_error = exc
-            time.sleep(0.5)
-
-        raise RuntimeError(f"Jupyter did not become ready within 15 seconds: {last_error}")
-
-    def _notebook_url(self) -> str:
-        selected = _resolve_path(self.project_root, self.notebook.value)
-        if selected.exists():
-            relative = selected.relative_to(self.project_root).as_posix()
-            notebook_path = urllib.parse.quote(relative, safe="/")
-            path = f"/notebooks/{notebook_path}"
-        else:
-            path = "/tree"
-        return f"http://127.0.0.1:{int(self.port.value)}{path}?token={self.token}"
-
-    @staticmethod
-    def _frame_html(url: str) -> str:
-        if not url:
-            return """
-            <div style="height:720px;border:1px solid #d5dbe3;border-radius:6px;
-                        display:flex;align-items:center;justify-content:center;
-                        color:#4b5563;background:#f8fafc;font-family:sans-serif;">
-                Start embedded Jupyter to load a notebook here.
+def _metrics_html(count: float, rate: float, speed: float, dwell: float) -> str:
+    metrics = [
+        ("Pedestrians", f"{count:,.0f}", ""),
+        ("People / hour", f"{rate:,.1f}", ""),
+        ("Median speed", f"{speed:,.2f}", "m/s"),
+        ("Dwell points", f"{dwell:,.0f}", ""),
+    ]
+    items = []
+    for label, value, unit in metrics:
+        unit_html = f'<span class="pedflow-metric-unit">{html.escape(unit)}</span>' if unit else ""
+        items.append(
+            f"""
+            <div class="pedflow-metric">
+              <div class="pedflow-metric-label">{html.escape(label)}</div>
+              <div class="pedflow-metric-value">{html.escape(value)}{unit_html}</div>
             </div>
             """
-
-        escaped_url = html.escape(url, quote=True)
-        return f"""
-        <iframe
-            src="{escaped_url}"
-            style="width:100%;height:720px;border:1px solid #d5dbe3;border-radius:6px;background:white;"
-            allow="clipboard-read; clipboard-write; fullscreen">
-        </iframe>
-        """
+        )
+    return f'<div class="pedflow-metrics">{"".join(items)}</div>'
 
 
-class PedFlowDashboard:
-    def __init__(self, project_root: Path = PROJECT_ROOT) -> None:
+def _status_html(title: str, message: str, kind: str = "info") -> str:
+    safe_kind = kind if kind in {"info", "success", "danger"} else "info"
+    return f"""
+    <div class="pedflow-status pedflow-status-{safe_kind}">
+      <div class="pedflow-status-title">{html.escape(title)}</div>
+      <div class="pedflow-status-body">{html.escape(message)}</div>
+    </div>
+    """
+
+
+class AnalysisPanel:
+    def __init__(self, project_root: Path) -> None:
         self.project_root = project_root
         self.result: FlowAnalysisResult | None = None
 
@@ -525,7 +353,7 @@ class PedFlowDashboard:
             name="Upload calibration JSON",
             accept=".json,application/json",
         )
-        self.save_outputs = pn.widgets.Checkbox(name="Write CSVs and PNG plots", value=True)
+        self.save_outputs = pn.widgets.Checkbox(name="Write CSV outputs", value=True)
 
         self.confidence_threshold = pn.widgets.FloatSlider(
             name="Confidence threshold",
@@ -556,11 +384,7 @@ class PedFlowDashboard:
             sizing_mode="stretch_width",
         )
         self.status = pn.pane.HTML(_status_html("Ready", "Select files and run the analysis."))
-
-        self.metrics = pn.pane.HTML(
-            _metrics_html(0, 0, 0, 0),
-            sizing_mode="stretch_width",
-        )
+        self.metrics = pn.pane.HTML(_metrics_html(0, 0, 0, 0), sizing_mode="stretch_width")
 
         self.summary_table = pn.widgets.Tabulator(pd.DataFrame(), pagination="remote", page_size=10)
         self.track_summary_table = pn.widgets.Tabulator(pd.DataFrame(), pagination="remote", page_size=12)
@@ -575,61 +399,61 @@ class PedFlowDashboard:
             ("Dwell", _empty_plot("No dwell map data yet")),
             ("Bottleneck", _empty_plot("No bottleneck data yet")),
             dynamic=True,
+            css_classes=["pedflow-tabs"],
         )
-        self.jupyter = JupyterEmbed(project_root)
 
         self.run_button.on_click(self._on_run)
 
-    def panel(self) -> pn.template.FastListTemplate:
-        template = pn.template.FastListTemplate(
-            title="Pedestrian Flow Logger",
-            sidebar=[
-                pn.pane.Markdown("## Inputs", css_classes=["pedflow-sidebar-title"]),
-                self.detections_path,
-                self.detections_upload,
-                self.calibration_path,
-                self.calibration_upload,
-                self.output_dir,
-                self.save_outputs,
-                self.run_button,
-                pn.pane.HTML('<div class="pedflow-sidebar-divider"></div>', height=16),
-                pn.pane.Markdown("### Tracking", css_classes=["pedflow-sidebar-title"]),
-                self.confidence_threshold,
-                self.max_matching_speed,
-                self.close_after,
-                self.min_track_duration,
-                self.min_detections,
-                self.smoothing_alpha,
-                pn.pane.Markdown("### Grid and Stops", css_classes=["pedflow-sidebar-title"]),
-                self.speed_window,
-                self.stop_speed_threshold,
-                self.stop_duration_threshold,
-                self.grid_size,
-            ],
-            main=[
-                self.status,
-                self.metrics,
-                pn.Tabs(
-                    ("Plots", self.plots),
-                    (
-                        "Tables",
-                        pn.Tabs(
-                            ("Summary", self.summary_table),
-                            ("Track summaries", self.track_summary_table),
-                            ("Grid metrics", self.grid_table),
-                            ("Processed tracks", self.tracks_table),
-                            dynamic=True,
-                        ),
-                    ),
-                    ("Jupyter", self.jupyter.panel()),
-                    dynamic=True,
-                    css_classes=["pedflow-main-tabs"],
-                ),
-            ],
-            accent_base_color="#256f78",
-            header_background="#17212b",
+    def panel(self) -> pn.Column:
+        input_controls = pn.Column(
+            self.detections_path,
+            self.detections_upload,
+            self.calibration_path,
+            self.calibration_upload,
+            self.output_dir,
+            self.save_outputs,
+            self.run_button,
+            css_classes=["pedflow-controls"],
+            sizing_mode="stretch_width",
         )
-        return template
+        tracking_controls = pn.Column(
+            self.confidence_threshold,
+            self.max_matching_speed,
+            self.close_after,
+            self.min_track_duration,
+            self.min_detections,
+            self.smoothing_alpha,
+            css_classes=["pedflow-controls"],
+            sizing_mode="stretch_width",
+        )
+        metric_controls = pn.Column(
+            self.speed_window,
+            self.stop_speed_threshold,
+            self.stop_duration_threshold,
+            self.grid_size,
+            css_classes=["pedflow-controls"],
+            sizing_mode="stretch_width",
+        )
+        tables = pn.Tabs(
+            ("Summary", self.summary_table),
+            ("Track summaries", self.track_summary_table),
+            ("Grid metrics", self.grid_table),
+            ("Processed tracks", self.tracks_table),
+            dynamic=True,
+            css_classes=["pedflow-tabs"],
+        )
+        return pn.Column(
+            pn.Row(input_controls, tracking_controls, metric_controls, css_classes=["pedflow-layout"]),
+            self.status,
+            self.metrics,
+            pn.Tabs(
+                ("Plots", self.plots),
+                ("Tables", tables),
+                dynamic=True,
+                css_classes=["pedflow-tabs"],
+            ),
+            sizing_mode="stretch_width",
+        )
 
     def _settings(self) -> FlowAnalysisSettings:
         return FlowAnalysisSettings(
@@ -679,7 +503,7 @@ class PedFlowDashboard:
 
             if self.save_outputs.value:
                 output = _resolve_path(self.project_root, self.output_dir.value)
-                write_analysis_outputs(self.result, output, grid_size_m=settings.grid_size_m)
+                write_analysis_outputs(self.result, output)
 
             self._update_outputs(self.result)
             message = (
@@ -687,7 +511,7 @@ class PedFlowDashboard:
                 f"{self.result.tracks['track_id'].nunique() if not self.result.tracks.empty else 0:,} tracks."
             )
             if self.save_outputs.value:
-                message += f" Outputs written to {self.output_dir.value}."
+                message += f" CSV outputs written to {self.output_dir.value}."
             self._set_status("Complete", message, kind="success")
         except Exception as exc:
             self._set_status("Analysis failed", str(exc), kind="danger")
@@ -759,45 +583,263 @@ class PedFlowDashboard:
         ]
 
 
-def _indicator_value(value: object) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    if np.isnan(number):
-        return 0.0
-    return number
+class CalibrationPanel:
+    def __init__(self, project_root: Path) -> None:
+        self.project_root = project_root
 
-
-def _metrics_html(count: float, rate: float, speed: float, dwell: float) -> str:
-    metrics = [
-        ("Pedestrians", f"{count:,.0f}", ""),
-        ("People / hour", f"{rate:,.1f}", ""),
-        ("Median speed", f"{speed:,.2f}", "m/s"),
-        ("Dwell points", f"{dwell:,.0f}", ""),
-    ]
-    items = []
-    for label, value, unit in metrics:
-        unit_html = f'<span class="pedflow-metric-unit">{html.escape(unit)}</span>' if unit else ""
-        items.append(
-            f"""
-            <div class="pedflow-metric">
-              <div class="pedflow-metric-label">{html.escape(label)}</div>
-              <div class="pedflow-metric-value">{html.escape(value)}{unit_html}</div>
-            </div>
-            """
+        self.board_output_dir = pn.widgets.TextInput(
+            name="Output folder",
+            value="outputs/charuco_board",
         )
-    return f'<div class="pedflow-metrics">{"".join(items)}</div>'
+        self.board_basename = pn.widgets.TextInput(name="File basename", value="charuco_board")
+        self.squares_x = pn.widgets.IntInput(name="Squares x", value=7, start=3)
+        self.squares_y = pn.widgets.IntInput(name="Squares y", value=5, start=3)
+        self.square_length_mm = pn.widgets.FloatInput(name="Square length (mm)", value=35.0)
+        self.marker_length_mm = pn.widgets.FloatInput(name="Marker length (mm)", value=25.0)
+        self.dictionary = pn.widgets.TextInput(name="ArUco dictionary", value="DICT_5X5_100")
+        self.dpi = pn.widgets.IntInput(name="DPI", value=300, start=72)
+        self.margin_mm = pn.widgets.FloatInput(name="Margin (mm)", value=10.0)
+        self.generate_board_button = pn.widgets.Button(
+            name="Generate board",
+            button_type="primary",
+            height=42,
+        )
+        self.board_status = pn.pane.HTML(_status_html("Ready", "Generate a printable ChArUco board."))
+
+        self.image_dir = pn.widgets.TextInput(
+            name="ChArUco image folder",
+            value="data/calibration_images/charuco",
+        )
+        self.board_metadata_path = pn.widgets.TextInput(
+            name="Board metadata JSON",
+            value="outputs/charuco_board/charuco_board.json",
+        )
+        self.intrinsics_output_path = pn.widgets.TextInput(
+            name="Intrinsics output JSON",
+            value="outputs/calibration_intrinsics.json",
+        )
+        self.min_corners = pn.widgets.IntInput(name="Min corners per image", value=8, start=4)
+        self.calibrate_intrinsics_button = pn.widgets.Button(
+            name="Calibrate intrinsics",
+            button_type="primary",
+            height=42,
+        )
+        self.intrinsics_status = pn.pane.HTML(
+            _status_html("Ready", "Place calibration images in the selected folder.")
+        )
+
+        self.intrinsics_path = pn.widgets.TextInput(
+            name="Intrinsics JSON",
+            value="outputs/calibration_intrinsics.json",
+        )
+        self.markers_csv = pn.widgets.TextInput(
+            name="Ground markers CSV",
+            value="data/ground_markers.csv",
+        )
+        self.calibration_output_path = pn.widgets.TextInput(
+            name="Calibration output JSON",
+            value="outputs/calibration.json",
+        )
+        self.ransac_threshold_m = pn.widgets.FloatInput(name="RANSAC threshold (m)", value=0.10)
+        self.compute_homography_button = pn.widgets.Button(
+            name="Build calibration",
+            button_type="primary",
+            height=42,
+        )
+        self.homography_status = pn.pane.HTML(
+            _status_html("Ready", "Use measured marker correspondences to build calibration.")
+        )
+
+        self.generate_board_button.on_click(self._on_generate_board)
+        self.calibrate_intrinsics_button.on_click(self._on_calibrate_intrinsics)
+        self.compute_homography_button.on_click(self._on_compute_homography)
+
+    def panel(self) -> pn.Tabs:
+        return pn.Tabs(
+            ("ChArUco Board", self._board_panel()),
+            ("Camera Intrinsics", self._intrinsics_panel()),
+            ("Ground Homography", self._homography_panel()),
+            dynamic=True,
+            css_classes=["pedflow-tabs"],
+        )
+
+    def _board_panel(self) -> pn.Column:
+        return pn.Column(
+            pn.Row(
+                pn.Column(
+                    self.board_output_dir,
+                    self.board_basename,
+                    self.dictionary,
+                    css_classes=["pedflow-controls"],
+                ),
+                pn.Column(
+                    self.squares_x,
+                    self.squares_y,
+                    self.square_length_mm,
+                    self.marker_length_mm,
+                    self.dpi,
+                    self.margin_mm,
+                    self.generate_board_button,
+                    css_classes=["pedflow-controls"],
+                ),
+                css_classes=["pedflow-layout"],
+            ),
+            self.board_status,
+        )
+
+    def _intrinsics_panel(self) -> pn.Column:
+        return pn.Column(
+            pn.Row(
+                pn.Column(
+                    self.image_dir,
+                    self.board_metadata_path,
+                    self.intrinsics_output_path,
+                    self.min_corners,
+                    self.calibrate_intrinsics_button,
+                    css_classes=["pedflow-controls"],
+                ),
+                css_classes=["pedflow-layout"],
+            ),
+            self.intrinsics_status,
+        )
+
+    def _homography_panel(self) -> pn.Column:
+        return pn.Column(
+            pn.Row(
+                pn.Column(
+                    self.intrinsics_path,
+                    self.markers_csv,
+                    self.calibration_output_path,
+                    self.ransac_threshold_m,
+                    self.compute_homography_button,
+                    css_classes=["pedflow-controls"],
+                ),
+                css_classes=["pedflow-layout"],
+            ),
+            self.homography_status,
+        )
+
+    def _on_generate_board(self, _event: object) -> None:
+        self.generate_board_button.loading = True
+        self.board_status.object = _status_html("Running", "Generating ChArUco board.")
+
+        try:
+            output_dir = _resolve_path(self.project_root, self.board_output_dir.value)
+            metadata = generate_charuco_board(
+                output_dir=output_dir,
+                squares_x=int(self.squares_x.value),
+                squares_y=int(self.squares_y.value),
+                square_length_mm=float(self.square_length_mm.value),
+                marker_length_mm=float(self.marker_length_mm.value),
+                dictionary_name=str(self.dictionary.value),
+                dpi=int(self.dpi.value),
+                margin_mm=float(self.margin_mm.value),
+                basename=str(self.board_basename.value),
+            )
+            message = (
+                f"Generated PDF, PNG, and metadata in "
+                f"{_display_path(self.project_root, output_dir)}. "
+                f"Board size: {metadata['board_width_m']:.3f} m x {metadata['board_height_m']:.3f} m."
+            )
+            self.board_status.object = _status_html("Complete", message, kind="success")
+        except Exception as exc:
+            self.board_status.object = _status_html("Board generation failed", str(exc), kind="danger")
+        finally:
+            self.generate_board_button.loading = False
+
+    def _on_calibrate_intrinsics(self, _event: object) -> None:
+        self.calibrate_intrinsics_button.loading = True
+        self.intrinsics_status.object = _status_html("Running", "Calibrating camera intrinsics.")
+
+        try:
+            image_dir = _resolve_path(self.project_root, self.image_dir.value)
+            image_paths = sorted(
+                list(image_dir.glob("*.jpg"))
+                + list(image_dir.glob("*.jpeg"))
+                + list(image_dir.glob("*.png"))
+            )
+            if not image_paths:
+                raise FileNotFoundError(
+                    f"No JPG, JPEG, or PNG files found in {_display_path(self.project_root, image_dir)}"
+                )
+
+            metadata_path = _resolve_path(self.project_root, self.board_metadata_path.value)
+            output_path = _resolve_path(self.project_root, self.intrinsics_output_path.value)
+            intrinsics = calibrate_camera_from_charuco(
+                image_paths=image_paths,
+                board_metadata_path=metadata_path,
+                min_corners=int(self.min_corners.value),
+            )
+            save_calibration(intrinsics, output_path)
+            message = (
+                f"Saved {_display_path(self.project_root, output_path)} from "
+                f"{len(intrinsics['used_images'])} images. "
+                f"RMS reprojection error: {intrinsics['rms_reprojection_error_px']:.3f} px."
+            )
+            self.intrinsics_status.object = _status_html("Complete", message, kind="success")
+        except Exception as exc:
+            self.intrinsics_status.object = _status_html(
+                "Intrinsics calibration failed",
+                str(exc),
+                kind="danger",
+            )
+        finally:
+            self.calibrate_intrinsics_button.loading = False
+
+    def _on_compute_homography(self, _event: object) -> None:
+        self.compute_homography_button.loading = True
+        self.homography_status.object = _status_html("Running", "Building ground calibration.")
+
+        try:
+            intrinsics_path = _resolve_path(self.project_root, self.intrinsics_path.value)
+            markers_path = _resolve_path(self.project_root, self.markers_csv.value)
+            output_path = _resolve_path(self.project_root, self.calibration_output_path.value)
+
+            intrinsics = load_calibration(intrinsics_path)
+            markers = read_marker_csv(markers_path)
+            homography = compute_ground_homography(
+                marker_points=markers,
+                camera_matrix=np.asarray(intrinsics["K"], dtype=np.float64),
+                dist_coeffs=np.asarray(intrinsics["dist"], dtype=np.float64),
+                ransac_threshold_m=float(self.ransac_threshold_m.value),
+            )
+            calibration = merge_and_save_calibration(intrinsics, homography, output_path)
+            message = (
+                f"Saved {_display_path(self.project_root, output_path)}. "
+                f"Mean residual: {calibration['ground_marker_mean_residual_m']:.3f} m; "
+                f"max residual: {calibration['ground_marker_max_residual_m']:.3f} m."
+            )
+            self.homography_status.object = _status_html("Complete", message, kind="success")
+        except Exception as exc:
+            self.homography_status.object = _status_html(
+                "Ground calibration failed",
+                str(exc),
+                kind="danger",
+            )
+        finally:
+            self.compute_homography_button.loading = False
 
 
-def _status_html(title: str, message: str, kind: str = "info") -> str:
-    safe_kind = kind if kind in {"info", "success", "danger"} else "info"
-    return f"""
-    <div class="pedflow-status pedflow-status-{safe_kind}">
-      <div class="pedflow-status-title">{html.escape(title)}</div>
-      <div class="pedflow-status-body">{html.escape(message)}</div>
-    </div>
-    """
+class PedFlowDashboard:
+    def __init__(self, project_root: Path = PROJECT_ROOT) -> None:
+        self.analysis = AnalysisPanel(project_root)
+        self.calibration = CalibrationPanel(project_root)
+
+    def panel(self) -> pn.template.FastListTemplate:
+        template = pn.template.FastListTemplate(
+            title="Pedestrian Flow Logger",
+            main=[
+                pn.Tabs(
+                    ("Analysis", self.analysis.panel()),
+                    ("Calibration", self.calibration.panel()),
+                    dynamic=True,
+                    css_classes=["pedflow-tabs"],
+                )
+            ],
+            accent_base_color="#256f78",
+            header_background="#17212b",
+        )
+        return template
 
 
 def build_app(project_root: Path = PROJECT_ROOT) -> pn.template.FastListTemplate:

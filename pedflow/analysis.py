@@ -7,7 +7,6 @@ import pandas as pd
 
 from .geometry import detections_to_ground
 from .metrics import add_dwell_flags, estimate_speeds, grid_statistics, summarize_flow, track_summaries
-from .plotting import write_standard_plots
 from .tracking import filter_short_tracks, link_detections
 
 
@@ -76,7 +75,6 @@ def run_flow_analysis(
 def write_analysis_outputs(
     result: FlowAnalysisResult,
     output_dir: str | Path,
-    grid_size_m: float = 0.5,
 ) -> None:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -86,4 +84,3 @@ def write_analysis_outputs(
     result.track_summaries.to_csv(output / "track_summaries.csv", index=False)
     result.summary.to_csv(output / "summary_metrics.csv", index=False)
     result.grid.to_csv(output / "grid_metrics.csv", index=False)
-    write_standard_plots(result.tracks, output, grid_size_m=grid_size_m)
