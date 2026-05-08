@@ -50,7 +50,7 @@ def _global_assignments(
 
     row_indices, column_indices = linear_sum_assignment(costs)
     assignments: dict[int, int] = {}
-    for row_position, column_position in zip(row_indices, column_indices):
+    for row_position, column_position in zip(row_indices, column_indices, strict=True):
         if costs[row_position, column_position] >= blocked_cost:
             continue
         assignments[int(row_position)] = int(track_ids[int(column_position)])

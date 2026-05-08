@@ -19,15 +19,21 @@ try:
         write_analysis_outputs,
     )
     from .calibration import (
-        compute_ground_homography,
         calibrate_camera_from_charuco,
+        compute_ground_homography,
         generate_charuco_board,
         merge_and_save_calibration,
         read_marker_csv,
     )
-    from .geometry import load_calibration, save_calibration
     from .debug_panel import UsbDebugPanel
-    from .ui_helpers import directory_options, display_path, file_options, keep_or_first, resolve_path
+    from .geometry import load_calibration, save_calibration
+    from .ui_helpers import (
+        directory_options,
+        display_path,
+        file_options,
+        keep_or_first,
+        resolve_path,
+    )
 except ImportError:
     from pedflow.analysis import (
         FlowAnalysisResult,
@@ -36,15 +42,21 @@ except ImportError:
         write_analysis_outputs,
     )
     from pedflow.calibration import (
-        compute_ground_homography,
         calibrate_camera_from_charuco,
+        compute_ground_homography,
         generate_charuco_board,
         merge_and_save_calibration,
         read_marker_csv,
     )
-    from pedflow.geometry import load_calibration, save_calibration
     from pedflow.debug_panel import UsbDebugPanel
-    from pedflow.ui_helpers import directory_options, display_path, file_options, keep_or_first, resolve_path
+    from pedflow.geometry import load_calibration, save_calibration
+    from pedflow.ui_helpers import (
+        directory_options,
+        display_path,
+        file_options,
+        keep_or_first,
+        resolve_path,
+    )
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

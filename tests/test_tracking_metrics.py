@@ -123,3 +123,33 @@ def test_dwell_flags_and_summary_metrics():
     assert int(summary.loc[0, "pedestrian_count"]) == 1
     assert int(summary.loc[0, "dwell_points"]) == 4
     assert np.isnan(per_track.loc[0, "detour_ratio"])
+
+
+def test_zero_duration_summary_rates_are_not_inferred_from_count():
+    tracks = pd.DataFrame(
+        [
+            {
+                "track_id": 1,
+                "timestamp_ms": 1000,
+                "smooth_ground_x_m": 0.0,
+                "smooth_ground_y_m": 0.0,
+                "speed_m_s": 0.0,
+                "is_dwell": False,
+            },
+            {
+                "track_id": 2,
+                "timestamp_ms": 1000,
+                "smooth_ground_x_m": 1.0,
+                "smooth_ground_y_m": 0.0,
+                "speed_m_s": 0.0,
+                "is_dwell": False,
+            },
+        ]
+    )
+
+    summary = summarize_flow(tracks)
+
+    assert int(summary.loc[0, "pedestrian_count"]) == 2
+    assert summary.loc[0, "duration_min"] == 0.0
+    assert np.isnan(summary.loc[0, "people_per_minute"])
+    assert np.isnan(summary.loc[0, "people_per_hour"])

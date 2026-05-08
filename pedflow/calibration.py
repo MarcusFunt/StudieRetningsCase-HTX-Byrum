@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+import re
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
 
 import cv2
 import numpy as np
@@ -12,8 +13,9 @@ import pandas as pd
 
 from .geometry import apply_homography, save_calibration, undistort_points
 
-
 DEFAULT_CHARUCO_DICTIONARY = "DICT_5X5_100"
+GROUND_MARKER_COLUMNS = ("image_x", "image_y", "ground_x_m", "ground_y_m")
+_SAFE_BASENAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def get_aruco_dictionary(dictionary_name: str = DEFAULT_CHARUCO_DICTIONARY) -> cv2.aruco.Dictionary:
@@ -47,6 +49,17 @@ def create_charuco_board(
     )
 
 
+def _safe_output_basename(basename: str) -> str:
+    if not basename:
+        raise ValueError("basename must not be empty")
+    path = Path(basename)
+    if path.is_absolute() or path.name != basename or basename in {".", ".."}:
+        raise ValueError("basename must be a filename stem, not a path")
+    if not _SAFE_BASENAME.fullmatch(basename):
+        raise ValueError("basename may only contain letters, numbers, dots, dashes, and underscores")
+    return basename
+
+
 def charuco_board_from_metadata(metadata: dict) -> cv2.aruco.CharucoBoard:
     return create_charuco_board(
         squares_x=int(metadata["squares_x"]),
@@ -73,6 +86,7 @@ def generate_charuco_board(
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    safe_basename = _safe_output_basename(basename)
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -90,15 +104,15 @@ def generate_charuco_board(
     board_height_mm = squares_y * square_length_mm
     total_width_mm = board_width_mm + margin_mm * 2.0
     total_height_mm = board_height_mm + margin_mm * 2.0
-    width_px = int(round(total_width_mm / 25.4 * dpi))
-    height_px = int(round(total_height_mm / 25.4 * dpi))
-    margin_px = int(round(margin_mm / 25.4 * dpi))
+    width_px = round(total_width_mm / 25.4 * dpi)
+    height_px = round(total_height_mm / 25.4 * dpi)
+    margin_px = round(margin_mm / 25.4 * dpi)
 
     image = board.generateImage((width_px, height_px), marginSize=margin_px, borderBits=1)
 
-    png_path = output_path / f"{basename}.png"
-    pdf_path = output_path / f"{basename}.pdf"
-    metadata_path = output_path / f"{basename}.json"
+    png_path = output_path / f"{safe_basename}.png"
+    pdf_path = output_path / f"{safe_basename}.pdf"
+    metadata_path = output_path / f"{safe_basename}.json"
 
     if not cv2.imwrite(str(png_path), image):
         raise OSError(f"Could not write {png_path}")
@@ -113,7 +127,7 @@ def generate_charuco_board(
     metadata = {
         "schema_version": 1,
         "board_type": "charuco",
-        "created_utc": datetime.now(timezone.utc).isoformat(),
+        "created_utc": datetime.now(UTC).isoformat(),
         "opencv_version": cv2.__version__,
         "dictionary": dictionary_name,
         "squares_x": int(squares_x),
@@ -131,7 +145,7 @@ def generate_charuco_board(
         "dpi": int(dpi),
         "image_width_px": int(width_px),
         "image_height_px": int(height_px),
-        "marker_count": int(len(board.getIds())),
+        "marker_count": len(board.getIds()),
         "png_path": str(png_path),
         "pdf_path": str(pdf_path),
         "metadata_path": str(metadata_path),
@@ -158,13 +172,32 @@ def detect_charuco_image_points(
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
     detector = cv2.aruco.CharucoDetector(board)
     charuco_corners, charuco_ids, _, marker_ids = detector.detectBoard(gray)
-    marker_count = 0 if marker_ids is None else int(len(marker_ids))
+    marker_count = 0 if marker_ids is None else len(marker_ids)
 
     if charuco_corners is None or charuco_ids is None or len(charuco_ids) < min_corners:
         raise ValueError(f"Detected fewer than {min_corners} ChArUco corners")
 
     object_points, image_points = board.matchImagePoints(charuco_corners, charuco_ids)
     return object_points.astype(np.float32), image_points.astype(np.float32), marker_count
+
+
+def _reprojection_rms_error(
+    object_points: np.ndarray,
+    image_points: np.ndarray,
+    rvec: np.ndarray,
+    tvec: np.ndarray,
+    camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
+) -> float:
+    projected, _ = cv2.projectPoints(object_points, rvec, tvec, camera_matrix, dist_coeffs)
+    projected_points = np.asarray(projected, dtype=np.float64).reshape(-1, 2)
+    measured_points = np.asarray(image_points, dtype=np.float64).reshape(-1, 2)
+    if len(projected_points) == 0:
+        raise ValueError("Cannot calculate reprojection error without image points")
+    if len(projected_points) != len(measured_points):
+        raise ValueError("Projected and measured image point counts differ")
+    residuals = projected_points - measured_points
+    return float(np.sqrt(np.mean(np.sum(residuals * residuals, axis=1))))
 
 
 def calibrate_camera_from_charuco(
@@ -210,7 +243,7 @@ def calibrate_camera_from_charuco(
         object_points.append(obj_points)
         image_points.append(img_points)
         used_images.append(str(path))
-        detected_corner_counts.append(int(len(img_points)))
+        detected_corner_counts.append(len(img_points))
         detected_marker_counts.append(marker_count)
 
     if image_size is None:
@@ -232,10 +265,12 @@ def calibrate_camera_from_charuco(
     )
 
     per_image_errors = []
-    for obj_points, img_points, rvec, tvec in zip(object_points, image_points, rvecs, tvecs):
-        projected, _ = cv2.projectPoints(obj_points, rvec, tvec, camera_matrix, dist_coeffs)
-        error = cv2.norm(img_points, projected, cv2.NORM_L2) / len(projected)
-        per_image_errors.append(float(error))
+    for obj_points, img_points, rvec, tvec in zip(
+        object_points, image_points, rvecs, tvecs, strict=True
+    ):
+        per_image_errors.append(
+            _reprojection_rms_error(obj_points, img_points, rvec, tvec, camera_matrix, dist_coeffs)
+        )
 
     return {
         "image_width": int(image_size[0]),
@@ -342,10 +377,12 @@ def calibrate_camera_from_checkerboard(
     )
 
     per_image_errors = []
-    for obj_points, img_points, rvec, tvec in zip(object_points, image_points, rvecs, tvecs):
-        projected, _ = cv2.projectPoints(obj_points, rvec, tvec, camera_matrix, dist_coeffs)
-        error = cv2.norm(img_points, projected, cv2.NORM_L2) / len(projected)
-        per_image_errors.append(float(error))
+    for obj_points, img_points, rvec, tvec in zip(
+        object_points, image_points, rvecs, tvecs, strict=True
+    ):
+        per_image_errors.append(
+            _reprojection_rms_error(obj_points, img_points, rvec, tvec, camera_matrix, dist_coeffs)
+        )
 
     return {
         "image_width": int(image_size[0]),
@@ -367,14 +404,38 @@ def calibrate_camera_from_checkerboard(
 
 
 def read_marker_csv(path: str | Path) -> pd.DataFrame:
-    markers = pd.read_csv(path)
-    required = {"image_x", "image_y", "ground_x_m", "ground_y_m"}
-    missing = required.difference(markers.columns)
+    return _validate_marker_points(pd.read_csv(path))
+
+
+def _validate_marker_points(markers: pd.DataFrame) -> pd.DataFrame:
+    missing = set(GROUND_MARKER_COLUMNS).difference(markers.columns)
     if missing:
         raise ValueError(f"Missing marker columns: {sorted(missing)}")
-    if len(markers) < 4:
+
+    output = markers.copy()
+    for column in GROUND_MARKER_COLUMNS:
+        converted = pd.to_numeric(output[column], errors="coerce")
+        values = converted.to_numpy(dtype=np.float64, na_value=np.nan)
+        if not np.isfinite(values).all():
+            raise ValueError(f"Marker column '{column}' must contain only finite numeric values")
+        output[column] = converted
+
+    if len(output) < 4:
         raise ValueError("At least 4 ground markers are required")
-    return markers
+
+    _validate_marker_point_set(output[["image_x", "image_y"]], "image")
+    _validate_marker_point_set(output[["ground_x_m", "ground_y_m"]], "ground")
+    return output
+
+
+def _validate_marker_point_set(points_frame: pd.DataFrame, label: str) -> None:
+    points = points_frame.to_numpy(dtype=np.float64)
+    unique_points = np.unique(points, axis=0)
+    if len(unique_points) < 4:
+        raise ValueError(f"At least 4 unique {label} marker points are required")
+    centered = unique_points - unique_points.mean(axis=0)
+    if np.linalg.matrix_rank(centered) < 2:
+        raise ValueError(f"{label.capitalize()} marker points must not be collinear")
 
 
 def compute_ground_homography(
@@ -383,6 +444,7 @@ def compute_ground_homography(
     dist_coeffs: np.ndarray,
     ransac_threshold_m: float = 0.10,
 ) -> dict:
+    marker_points = _validate_marker_points(marker_points)
     image_points = marker_points[["image_x", "image_y"]].to_numpy(dtype=np.float64)
     ground_points = marker_points[["ground_x_m", "ground_y_m"]].to_numpy(dtype=np.float64)
     undistorted_image_points = undistort_points(image_points, camera_matrix, dist_coeffs)
@@ -408,7 +470,7 @@ def compute_ground_homography(
 
     return {
         "H_image_to_ground": homography.tolist(),
-        "ground_marker_count": int(len(marker_points)),
+        "ground_marker_count": len(marker_points),
         "ground_marker_inliers": mask,
         "ground_marker_residuals_m": residuals.astype(float).tolist(),
         "ground_marker_mean_residual_m": float(np.mean(residuals)),

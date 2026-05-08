@@ -5,12 +5,15 @@ import csv
 import json
 import socket
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-from pedflow.serial_protocol import CSV_COLUMNS, metadata_path_for as _metadata_path_for
-from pedflow.serial_protocol import parse_serial_csv_line, validate_csv_row
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
+from pedflow.serial_protocol import CSV_COLUMNS, parse_serial_csv_line, validate_csv_row
+from pedflow.serial_protocol import metadata_path_for as _metadata_path_for
 
 DEFAULT_BIND_HOST = "0.0.0.0"
 DEFAULT_UDP_PORT = 4210
@@ -39,7 +42,7 @@ def main() -> int:
     metadata_path = _metadata_path_for(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    start_time = datetime.now(timezone.utc)
+    start_time = datetime.now(UTC)
     rows_written = 0
     skipped_row_count = 0
     comment_row_count = 0
@@ -95,7 +98,7 @@ def main() -> int:
         except KeyboardInterrupt:
             print("\nStopped capture.")
 
-    end_time = datetime.now(timezone.utc)
+    end_time = datetime.now(UTC)
     metadata = {
         "start_utc": start_time.isoformat(),
         "end_utc": end_time.isoformat(),

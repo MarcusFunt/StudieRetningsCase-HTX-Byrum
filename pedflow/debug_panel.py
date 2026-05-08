@@ -13,7 +13,6 @@ from .geometry import load_calibration
 from .live_debug import SerialDebugReader, analyze_live_debug_rows
 from .ui_helpers import file_options, keep_or_first, resolve_path, serial_port_options
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 pn.extension("tabulator")

@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -30,3 +32,14 @@ def test_capture_metadata_path_uses_json_sidecar():
     assert _metadata_path_for(Path("data/detections/session.csv")) == Path(
         "data/detections/session.metadata.json"
     )
+
+
+def test_capture_serial_script_help_runs_from_repo_root():
+    result = subprocess.run(
+        [sys.executable, "scripts/capture_serial.py", "--help"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Capture Grove Vision bbox CSV rows from USB serial" in result.stdout

@@ -8,7 +8,6 @@ import cv2
 import numpy as np
 import pandas as pd
 
-
 Calibration = dict[str, Any]
 
 DETECTION_COLUMNS = (

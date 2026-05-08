@@ -1,3 +1,6 @@
+import subprocess
+import sys
+
 from scripts.capture_serial import CSV_COLUMNS, validate_csv_row
 from scripts.capture_wifi import DEFAULT_UDP_PORT, parse_udp_payload_lines
 
@@ -30,3 +33,14 @@ def test_wifi_rows_use_shared_csv_schema():
 
 def test_default_udp_port_matches_firmware():
     assert DEFAULT_UDP_PORT == 4210
+
+
+def test_capture_wifi_script_help_runs_from_repo_root():
+    result = subprocess.run(
+        [sys.executable, "scripts/capture_wifi.py", "--help"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "PedFlow sensor Wi-Fi UDP feed" in result.stdout

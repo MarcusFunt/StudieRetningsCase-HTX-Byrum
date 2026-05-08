@@ -7,22 +7,21 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 from pedpy import (
-    AxisAlignedMeasurementArea,
-    DensityMethod,
     FRAME_COL,
     ID_COL,
     SPEED_COL,
+    X_COL,
+    Y_COL,
+    AxisAlignedMeasurementArea,
+    DensityMethod,
     SpeedCalculation,
     SpeedMethod,
     TrajectoryData,
-    X_COL,
-    Y_COL,
     compute_density_profile,
     compute_individual_speed,
     compute_speed_profile,
     get_grid_cells,
 )
-
 
 _PEDPY_FRAME_COL = "_pedpy_frame"
 _TIMING_JITTER_WARNING_RATIO = 0.25
@@ -87,7 +86,7 @@ def _timestamp_frame_lookup(timestamps_ms: pd.Series) -> dict[float, int]:
     median_delta_ms = float(np.median(positive_deltas_ms))
     first_timestamp_ms = float(unique_timestamps[0])
     return {
-        float(timestamp): int(round((float(timestamp) - first_timestamp_ms) / median_delta_ms))
+        float(timestamp): round((float(timestamp) - first_timestamp_ms) / median_delta_ms)
         for timestamp in unique_timestamps
     }
 
@@ -140,7 +139,7 @@ def _prepare_pedpy_tracks(tracks: pd.DataFrame) -> _PedPyTracks:
 def _frame_step_from_window(window_s: float, frame_rate: float) -> int:
     if window_s <= 0:
         raise ValueError("window_s must be greater than zero")
-    return max(1, int(round(window_s * frame_rate / 2.0)))
+    return max(1, round(window_s * frame_rate / 2.0))
 
 
 def _profile_measurement_area(tracks: pd.DataFrame, grid_size_m: float) -> AxisAlignedMeasurementArea:
@@ -329,7 +328,7 @@ def track_summaries(tracks: pd.DataFrame) -> pd.DataFrame:
             {
                 "track_id": int(track_id),
                 "duration_s": float(duration_s),
-                "detections": int(len(ordered)),
+                "detections": len(ordered),
                 "path_length_m": float(path_length_m),
                 "straight_line_m": float(straight_line_m),
                 "detour_ratio": float(detour_ratio) if not np.isnan(detour_ratio) else np.nan,
@@ -361,7 +360,7 @@ def summarize_flow(tracks: pd.DataFrame) -> pd.DataFrame:
     ) / 1000.0 / 60.0
     duration_min = max(duration_min, 0.0)
     pedestrian_count = int(tracks["track_id"].nunique())
-    people_per_minute = pedestrian_count / duration_min if duration_min > 0 else float(pedestrian_count)
+    people_per_minute = pedestrian_count / duration_min if duration_min > 0 else np.nan
     summaries = track_summaries(tracks)
     detour_ratios = summaries["detour_ratio"].dropna()
 

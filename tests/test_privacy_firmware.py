@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 SKETCH = Path("GroveAIV2_Box_AP/GroveAIV2_Box_AP.ino")
 
 

@@ -2,7 +2,12 @@ import cv2
 import numpy as np
 import pytest
 
-from pedflow.calibration import calibrate_camera_from_checkerboard
+from pedflow.calibration import (
+    _reprojection_rms_error,
+    calibrate_camera_from_checkerboard,
+    generate_charuco_board,
+    read_marker_csv,
+)
 
 
 def test_checkerboard_calibration_rejects_mixed_image_resolutions(tmp_path):
@@ -17,3 +22,110 @@ def test_checkerboard_calibration_rejects_mixed_image_resolutions(tmp_path):
             pattern_size=(3, 3),
             square_size_m=0.1,
         )
+
+
+def test_reprojection_error_reports_rms_pixel_error():
+    object_points = np.array(
+        [
+            [[0.0, 0.0, 0.0]],
+            [[1.0, 0.0, 0.0]],
+            [[0.0, 1.0, 0.0]],
+            [[1.0, 1.0, 0.0]],
+        ],
+        dtype=np.float32,
+    )
+    camera_matrix = np.array(
+        [
+            [20.0, 0.0, 0.0],
+            [0.0, 20.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float64,
+    )
+    dist_coeffs = np.zeros(5, dtype=np.float64)
+    rvec = np.zeros((3, 1), dtype=np.float64)
+    tvec = np.array([[0.0], [0.0], [2.0]], dtype=np.float64)
+    projected, _ = cv2.projectPoints(object_points, rvec, tvec, camera_matrix, dist_coeffs)
+    residuals = np.array(
+        [
+            [[3.0, 4.0]],
+            [[0.0, 5.0]],
+            [[5.0, 0.0]],
+            [[4.0, 3.0]],
+        ],
+        dtype=np.float64,
+    )
+
+    error = _reprojection_rms_error(
+        object_points,
+        projected + residuals,
+        rvec,
+        tvec,
+        camera_matrix,
+        dist_coeffs,
+    )
+
+    assert error == pytest.approx(5.0)
+
+
+@pytest.mark.parametrize("basename", ["../escape", "nested/name", r"nested\name", "bad name"])
+def test_generate_charuco_board_rejects_path_like_basename(tmp_path, basename):
+    with pytest.raises(ValueError, match="basename"):
+        generate_charuco_board(tmp_path, basename=basename)
+
+
+def test_marker_csv_rejects_non_finite_values(tmp_path):
+    markers_path = tmp_path / "markers.csv"
+    markers_path.write_text(
+        "\n".join(
+            [
+                "image_x,image_y,ground_x_m,ground_y_m",
+                "120.0,200.0,0.0,0.0",
+                "200.0,200.0,1.0,0.0",
+                "120.0,140.0,0.0,1.0",
+                "200.0,140.0,inf,1.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="finite numeric"):
+        read_marker_csv(markers_path)
+
+
+def test_marker_csv_rejects_duplicate_points(tmp_path):
+    markers_path = tmp_path / "markers.csv"
+    markers_path.write_text(
+        "\n".join(
+            [
+                "image_x,image_y,ground_x_m,ground_y_m",
+                "120.0,200.0,0.0,0.0",
+                "120.0,200.0,1.0,0.0",
+                "120.0,140.0,0.0,1.0",
+                "200.0,140.0,1.0,1.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="4 unique image"):
+        read_marker_csv(markers_path)
+
+
+def test_marker_csv_rejects_collinear_points(tmp_path):
+    markers_path = tmp_path / "markers.csv"
+    markers_path.write_text(
+        "\n".join(
+            [
+                "image_x,image_y,ground_x_m,ground_y_m",
+                "100.0,100.0,0.0,0.0",
+                "200.0,100.0,1.0,0.0",
+                "300.0,100.0,2.0,0.0",
+                "400.0,100.0,3.0,0.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="marker points must not be collinear"):
+        read_marker_csv(markers_path)

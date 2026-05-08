@@ -4,7 +4,6 @@ import csv
 import math
 from pathlib import Path
 
-
 CSV_HEADER = "timestamp_ms,frame_id,detection_id,bbox_x,bbox_y,bbox_w,bbox_h,confidence,target"
 CSV_COLUMNS = CSV_HEADER.split(",")
 

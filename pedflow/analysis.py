@@ -6,7 +6,13 @@ from pathlib import Path
 import pandas as pd
 
 from .geometry import detections_to_ground
-from .metrics import add_dwell_flags, estimate_speeds, grid_statistics, summarize_flow, track_summaries
+from .metrics import (
+    add_dwell_flags,
+    estimate_speeds,
+    grid_statistics,
+    summarize_flow,
+    track_summaries,
+)
 from .tracking import filter_short_tracks, link_detections
 
 

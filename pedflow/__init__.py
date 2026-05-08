@@ -1,6 +1,11 @@
 """Offline tools for privacy-preserving pedestrian flow analysis."""
 
-from .analysis import FlowAnalysisResult, FlowAnalysisSettings, run_flow_analysis, write_analysis_outputs
+from .analysis import (
+    FlowAnalysisResult,
+    FlowAnalysisSettings,
+    run_flow_analysis,
+    write_analysis_outputs,
+)
 from .calibration import calibrate_camera_from_charuco, generate_charuco_board
 from .geometry import (
     apply_homography,

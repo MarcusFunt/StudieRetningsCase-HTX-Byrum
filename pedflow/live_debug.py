@@ -14,7 +14,6 @@ from .geometry import bbox_foot_points, validate_detection_input
 from .metrics import summarize_flow
 from .serial_protocol import CSV_COLUMNS, parse_serial_csv_line, validate_csv_row
 
-
 DEFAULT_DEBUG_SETTINGS = FlowAnalysisSettings(
     confidence_threshold=0.5,
     max_matching_speed_m_s=4.5,
