@@ -20,13 +20,13 @@ Sensor Wi-Fi credentials are generated locally and ignored by git. Run setup, or
 
 ## Firmware
 
-The sketch in `GroveAIV2_Box_AP/GroveAIV2_Box_AP.ino` starts a direct sensor Wi-Fi network and broadcasts CSV rows to the connected computer:
+The sketch in `GroveAIV2_Box_AP/GroveAIV2_Box_AP.ino` starts a direct sensor Wi-Fi network and sends CSV rows to the connected computer over UDP:
 
 ```text
 SSID: see secrets/pedflow_wifi.txt
 Password: see secrets/pedflow_wifi.txt
 Sensor IP: 192.168.4.1
-UDP broadcast: 192.168.4.255:4210
+UDP port: 4210
 ```
 
 The generated secret files share one local source of truth:
@@ -55,6 +55,8 @@ timestamp_ms,frame_id,detection_id,bbox_x,bbox_y,bbox_w,bbox_h,confidence,target
 ```
 
 The Grove Vision AI V2 AT protocol reports boxes as center `x,y,w,h`. The sketch converts them to top-left `bbox_x,bbox_y,bbox_w,bbox_h`, and converts `score` from `0-100` to confidence `0.0-1.0`.
+
+For UDP debugging, the firmware sends a one-second `#status,udp_heartbeat,...` datagram. With no connected station it uses `192.168.4.255`; once a laptop is connected to the sensor AP it also attempts unicast delivery to the expected client addresses on `192.168.4.0/24`. Over USB serial, `WIFI_STATUS` prints AP and UDP counters, and `UDP_TEST` sends a short burst of status datagrams.
 
 Capture a session from a PC over Wi-Fi:
 

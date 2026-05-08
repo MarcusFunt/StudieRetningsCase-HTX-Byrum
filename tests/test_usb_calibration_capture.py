@@ -51,6 +51,10 @@ def test_decode_calibration_image_payload_rejects_non_jpeg_payload():
         decode_calibration_image_payload("bm90LWpwZWc=")
 
 
+def test_decode_calibration_image_payload_allows_nul_padding_after_jpeg_eoi():
+    assert decode_calibration_image_payload("/9j/2QAAAA==") == b"\xff\xd8\xff\xd9"
+
+
 def test_usb_calibration_metadata_path_uses_json_sidecar():
     assert metadata_path_for(Path("data/calibration_images/charuco/photo.jpg")) == Path(
         "data/calibration_images/charuco/photo.metadata.json"

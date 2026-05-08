@@ -15,10 +15,20 @@ constexpr unsigned long ERROR_LOG_INTERVAL_MS = 5000;
 constexpr unsigned long SSCMA_RESPONSE_TIMEOUT_MS = 1000;
 constexpr unsigned long SSCMA_INVOKE_EVENT_TIMEOUT_MS = 5000;
 constexpr unsigned long SSCMA_IMAGE_EVENT_TIMEOUT_MS = 15000;
+constexpr unsigned long AI_INIT_SETTLE_MS = 1500;
+constexpr unsigned long AI_INIT_RETRY_INTERVAL_MS = 3000;
+constexpr unsigned long UDP_HEARTBEAT_INTERVAL_MS = 1000;
 constexpr uint16_t WIFI_UDP_PORT = 4210;
+constexpr uint8_t WIFI_AP_CHANNEL = 6;
+constexpr bool WIFI_AP_HIDDEN = false;
+constexpr uint8_t WIFI_AP_MAX_CLIENTS = 2;
 constexpr uint8_t SSCMA_I2C_ADDRESS = 0x62;
-constexpr uint32_t SSCMA_I2C_CLOCK = 400000;
+constexpr uint32_t SSCMA_I2C_CLOCK = 100000;
 constexpr uint8_t SSCMA_I2C_WAIT_DELAY_MS = 2;
+constexpr uint8_t SSCMA_I2C_RECOVERY_CLOCKS = 18;
+constexpr int32_t SSCMA_RESET_PIN = D3;
+constexpr unsigned long SSCMA_RESET_LOW_MS = 50;
+constexpr unsigned long SSCMA_RESET_SETTLE_MS = 1500;
 constexpr uint8_t SSCMA_MAX_PAYLOAD_LEN = 250;
 constexpr size_t STATUS_BUFFER_SIZE = 120;
 constexpr size_t CSV_ROW_BUFFER_SIZE = 160;
@@ -29,10 +39,13 @@ constexpr const char CSV_HEADER[] =
     "timestamp_ms,frame_id,detection_id,bbox_x,bbox_y,bbox_w,bbox_h,confidence,target";
 constexpr const char USB_CALIBRATION_CAPTURE_COMMAND[] = "CALIB_CAPTURE";
 constexpr const char USB_MODULE_INFO_COMMAND[] = "MODULE_INFO";
+constexpr const char USB_WIFI_STATUS_COMMAND[] = "WIFI_STATUS";
+constexpr const char USB_UDP_TEST_COMMAND[] = "UDP_TEST";
+constexpr const char USB_RAW_AT_COMMAND_PREFIX[] = "AT:";
 constexpr const char CALIBRATION_IMAGE_BEGIN_PREFIX[] = "#calibration_image_begin";
 constexpr const char CALIBRATION_IMAGE_END[] = "#calibration_image_end";
 constexpr const char SSCMA_INVOKE_DETECTIONS_COMMAND[] = "AT+INVOKE=1,0,1\r\n";
-constexpr const char SSCMA_INVOKE_IMAGE_COMMAND[] = "AT+INVOKE=1,0,0\r\n";
+constexpr const char SSCMA_SAMPLE_IMAGE_COMMAND[] = "AT+SAMPLE=1\r\n";
 constexpr const char SSCMA_ID_COMMAND[] = "AT+ID?\r\n";
 constexpr const char SSCMA_NAME_COMMAND[] = "AT+NAME?\r\n";
 constexpr const char SSCMA_INFO_COMMAND[] = "AT+INFO?\r\n";
@@ -61,12 +74,27 @@ bool usbDebugActive = false;
 unsigned long lastInferenceMs = 0;
 unsigned long lastInvokeErrorLogMs = 0;
 unsigned long lastEmptyFrameLogMs = 0;
+unsigned long lastUdpHeartbeatMs = 0;
+unsigned long lastAiInitAttemptMs = 0;
 uint32_t frameId = 0;
 uint32_t invokeFailureCount = 0;
+uint32_t aiInitAttemptCount = 0;
+uint32_t udpPacketAttemptCount = 0;
+uint32_t udpPacketSuccessCount = 0;
+uint32_t udpPacketFailureCount = 0;
+uint32_t udpBeginFailureCount = 0;
+uint32_t udpWriteFailureCount = 0;
+uint32_t udpEndFailureCount = 0;
+uint32_t udpHeartbeatCount = 0;
 bool aiReady = false;
+uint8_t lastSscmaProbeError = 0;
+uint8_t lastSscmaWriteError = 0;
+uint8_t lastSscmaAvailableError = 0;
+uint8_t lastSscmaReadError = 0;
 char aiId[MODULE_TEXT_BUFFER_SIZE] = "";
 char aiName[MODULE_TEXT_BUFFER_SIZE] = "";
 char aiInfo[MODULE_TEXT_BUFFER_SIZE] = "";
+char wifiApDetails[STATUS_BUFFER_SIZE] = "";
 char sscmaRxBuffer[SSCMA_RX_BUFFER_SIZE];
 size_t sscmaRxLength = 0;
 
@@ -76,15 +104,54 @@ struct RawSscmaMessage {
   size_t consumeLength = 0;
 };
 
-void sendUdpLine(const char *line)
+bool sendUdpPacket(const IPAddress &destination, const char *line)
 {
-  if (!udpReady) {
-    return;
+  ++udpPacketAttemptCount;
+  if (!udp.beginPacket(destination, WIFI_UDP_PORT)) {
+    ++udpPacketFailureCount;
+    ++udpBeginFailureCount;
+    return false;
   }
 
-  udp.beginPacket(WIFI_UDP_BROADCAST, WIFI_UDP_PORT);
-  udp.print(line);
-  udp.endPacket();
+  const size_t expectedLength = strlen(line);
+  const size_t writtenLength = udp.print(line);
+  const bool writeSucceeded = writtenLength == expectedLength;
+  if (!writeSucceeded) {
+    ++udpWriteFailureCount;
+  }
+
+  if (!udp.endPacket()) {
+    ++udpPacketFailureCount;
+    ++udpEndFailureCount;
+    return false;
+  }
+
+  if (!writeSucceeded) {
+    ++udpPacketFailureCount;
+    return false;
+  }
+
+  ++udpPacketSuccessCount;
+  return true;
+}
+
+bool sendUdpLine(const char *line)
+{
+  if (!udpReady) {
+    return false;
+  }
+
+  const uint8_t stationCount = static_cast<uint8_t>(WiFi.softAPgetStationNum());
+  if (stationCount == 0) {
+    return sendUdpPacket(WIFI_UDP_BROADCAST, line);
+  }
+
+  bool sent = false;
+  const uint8_t targetCount = min(stationCount, WIFI_AP_MAX_CLIENTS);
+  for (uint8_t host = 2; host < 2 + targetCount; ++host) {
+    sent = sendUdpPacket(IPAddress(192, 168, 4, host), line) || sent;
+  }
+  return sent;
 }
 
 bool isUsbDebugActive()
@@ -162,6 +229,52 @@ void copyText(char *destination, size_t destinationSize, const char *source)
   snprintf(destination, destinationSize, "%s", source);
 }
 
+void releaseI2cLine(uint8_t pin)
+{
+  pinMode(pin, INPUT_PULLUP);
+}
+
+void driveI2cLineLow(uint8_t pin)
+{
+  digitalWrite(pin, LOW);
+  pinMode(pin, OUTPUT);
+}
+
+void recoverSscmaI2cBus()
+{
+  Wire.end();
+  releaseI2cLine(SDA);
+  releaseI2cLine(SCL);
+  delay(5);
+
+  for (uint8_t i = 0; i < SSCMA_I2C_RECOVERY_CLOCKS; ++i) {
+    driveI2cLineLow(SCL);
+    delayMicroseconds(5);
+    releaseI2cLine(SCL);
+    delayMicroseconds(5);
+  }
+
+  driveI2cLineLow(SDA);
+  delayMicroseconds(5);
+  releaseI2cLine(SCL);
+  delayMicroseconds(5);
+  releaseI2cLine(SDA);
+  delay(5);
+}
+
+void resetSscmaModule()
+{
+  if (SSCMA_RESET_PIN < 0) {
+    return;
+  }
+
+  pinMode(SSCMA_RESET_PIN, OUTPUT);
+  digitalWrite(SSCMA_RESET_PIN, LOW);
+  delay(SSCMA_RESET_LOW_MS);
+  pinMode(SSCMA_RESET_PIN, INPUT);
+  delay(SSCMA_RESET_SETTLE_MS);
+}
+
 void printBootSummaryUsbOnly()
 {
   if (!usbDebugActive) {
@@ -178,6 +291,9 @@ void printBootSummaryUsbOnly()
   }
   if (aiInfo[0] != '\0') {
     printUsbOnlyStatusValue("status", "ai_info", aiInfo);
+  }
+  if (wifiApDetails[0] != '\0') {
+    Serial.println(wifiApDetails);
   }
 }
 
@@ -199,13 +315,19 @@ void updateUsbDebugMode()
 void startWifiAccessPoint()
 {
   WiFi.mode(WIFI_AP);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
   if (!WiFi.softAPConfig(WIFI_AP_IP, WIFI_AP_GATEWAY, WIFI_AP_SUBNET)) {
     printStatus("error", "wifi_ap_config_failed");
     return;
   }
 
-  if (!WiFi.softAP(PEDFLOW_WIFI_AP_SSID, PEDFLOW_WIFI_AP_PASSWORD)) {
+  if (!WiFi.softAP(
+          PEDFLOW_WIFI_AP_SSID,
+          PEDFLOW_WIFI_AP_PASSWORD,
+          WIFI_AP_CHANNEL,
+          WIFI_AP_HIDDEN,
+          WIFI_AP_MAX_CLIENTS)) {
     printStatus("error", "wifi_ap_start_failed");
     return;
   }
@@ -217,6 +339,14 @@ void startWifiAccessPoint()
 
   udpReady = true;
   printStatus("status", "wifi_ap_ready");
+  snprintf(
+      wifiApDetails,
+      sizeof(wifiApDetails),
+      "#status,wifi_ap_details,%s,%s,%u",
+      WiFi.softAPIP().toString().c_str(),
+      WiFi.softAPmacAddress().c_str(),
+      static_cast<unsigned int>(WIFI_AP_CHANNEL));
+  emitTelemetryLine(wifiApDetails);
 }
 
 bool sscmaWritePacket(const char *data, uint8_t length)
@@ -229,7 +359,8 @@ bool sscmaWritePacket(const char *data, uint8_t length)
   Wire.write(reinterpret_cast<const uint8_t *>(data), length);
   Wire.write(static_cast<uint8_t>(0));
   Wire.write(static_cast<uint8_t>(0));
-  return Wire.endTransmission() == 0;
+  lastSscmaWriteError = Wire.endTransmission();
+  return lastSscmaWriteError == 0;
 }
 
 bool sscmaWrite(const char *data, size_t length)
@@ -260,7 +391,8 @@ int sscmaAvailable()
   Wire.write(static_cast<uint8_t>(0));
   Wire.write(static_cast<uint8_t>(0));
   Wire.write(static_cast<uint8_t>(0));
-  if (Wire.endTransmission() != 0) {
+  lastSscmaAvailableError = Wire.endTransmission();
+  if (lastSscmaAvailableError != 0) {
     return 0;
   }
 
@@ -291,7 +423,8 @@ int sscmaRead(char *data, int length)
     Wire.write(static_cast<uint8_t>(chunkLength & 0xFF));
     Wire.write(static_cast<uint8_t>(0));
     Wire.write(static_cast<uint8_t>(0));
-    if (Wire.endTransmission() != 0) {
+    lastSscmaReadError = Wire.endTransmission();
+    if (lastSscmaReadError != 0) {
       break;
     }
 
@@ -323,6 +456,23 @@ void drainSscmaBytes(int byteCount)
     }
     remaining -= readCount;
   }
+}
+
+void resetSscmaParser()
+{
+  sscmaRxLength = 0;
+  sscmaRxBuffer[0] = '\0';
+}
+
+void flushSscmaInput()
+{
+  int available = sscmaAvailable();
+  while (available > 0) {
+    drainSscmaBytes(available);
+    delay(SSCMA_I2C_WAIT_DELAY_MS);
+    available = sscmaAvailable();
+  }
+  resetSscmaParser();
 }
 
 bool fillSscmaRxBuffer(char *error, size_t errorSize)
@@ -481,7 +631,23 @@ bool waitForExpectedJson(
 bool sendSscmaCommand(const char *command, char *error, size_t errorSize)
 {
   if (!sscmaWrite(command, strlen(command))) {
-    snprintf(error, errorSize, "write_failed");
+    snprintf(error, errorSize, "write_failed_%u", static_cast<unsigned int>(lastSscmaWriteError));
+    return false;
+  }
+
+  return true;
+}
+
+bool probeSscmaDevice(char *error, size_t errorSize)
+{
+  Wire.beginTransmission(SSCMA_I2C_ADDRESS);
+  lastSscmaProbeError = Wire.endTransmission();
+  if (lastSscmaProbeError != 0) {
+    snprintf(
+        error,
+        errorSize,
+        "i2c_probe_failed_%u",
+        static_cast<unsigned int>(lastSscmaProbeError));
     return false;
   }
 
@@ -525,17 +691,31 @@ bool queryModuleText(
   return destination[0] != '\0';
 }
 
-void resetSscmaParser()
-{
-  sscmaRxLength = 0;
-  sscmaRxBuffer[0] = '\0';
-}
-
 bool initializeAiModule()
 {
-  Wire.begin();
+  lastAiInitAttemptMs = millis();
+  ++aiInitAttemptCount;
+  aiId[0] = '\0';
+  aiName[0] = '\0';
+  aiInfo[0] = '\0';
+
+  recoverSscmaI2cBus();
+  Wire.begin(SDA, SCL);
   Wire.setClock(SSCMA_I2C_CLOCK);
+  resetSscmaModule();
   resetSscmaParser();
+
+  const unsigned long now = millis();
+  if (now < AI_INIT_SETTLE_MS) {
+    delay(AI_INIT_SETTLE_MS - now);
+  }
+
+  char error[STATUS_BUFFER_SIZE] = "";
+  if (!probeSscmaDevice(error, sizeof(error))) {
+    printStatusValue("error", "ai_query_failed", error);
+    printStatus("error", "ai_begin_failed");
+    return false;
+  }
 
   if (!queryModuleText(SSCMA_ID_COMMAND, "ID?", nullptr, aiId, sizeof(aiId))) {
     printStatus("error", "ai_begin_failed");
@@ -547,7 +727,7 @@ bool initializeAiModule()
     return false;
   }
 
-  queryModuleText(SSCMA_INFO_COMMAND, "INFO", "info", aiInfo, sizeof(aiInfo));
+  queryModuleText(SSCMA_INFO_COMMAND, "INFO?", "info", aiInfo, sizeof(aiInfo));
   printStatus("status", "ai_ready");
   printStatusValue("status", "ai_id", aiId);
   printStatusValue("status", "ai_name", aiName);
@@ -555,6 +735,27 @@ bool initializeAiModule()
     printStatusValue("status", "ai_info", aiInfo);
   }
   return true;
+}
+
+void retryAiInitialization()
+{
+  if (aiReady) {
+    return;
+  }
+
+  const unsigned long now = millis();
+  if (lastAiInitAttemptMs != 0 && now - lastAiInitAttemptMs < AI_INIT_RETRY_INTERVAL_MS) {
+    return;
+  }
+
+  char line[STATUS_BUFFER_SIZE];
+  snprintf(
+      line,
+      sizeof(line),
+      "#status,ai_init_retry,%lu",
+      static_cast<unsigned long>(aiInitAttemptCount + 1));
+  emitTelemetryLine(line);
+  aiReady = initializeAiModule();
 }
 
 void printInvokeError(unsigned long now, const char *stage, const char *reason)
@@ -689,57 +890,6 @@ void logDetections()
   }
 }
 
-bool rawMessageLooksLikeInvokeEvent(const char *json)
-{
-  return strstr(json, "\"type\":1") != nullptr &&
-         strstr(json, "\"name\":\"INVOKE\"") != nullptr &&
-         strstr(json, "\"code\":0") != nullptr;
-}
-
-const char *findJsonStringValue(const char *json, const char *key)
-{
-  const char *cursor = strstr(json, key);
-  if (cursor == nullptr) {
-    return nullptr;
-  }
-  return cursor + strlen(key);
-}
-
-size_t jsonStringDecodedLength(const char *start, const char **endOut)
-{
-  size_t length = 0;
-  const char *cursor = start;
-  while (*cursor != '\0') {
-    if (*cursor == '"') {
-      *endOut = cursor;
-      return length;
-    }
-    if (*cursor == '\\' && cursor[1] != '\0') {
-      cursor += 2;
-      ++length;
-      continue;
-    }
-    ++cursor;
-    ++length;
-  }
-
-  *endOut = nullptr;
-  return 0;
-}
-
-void printJsonStringPayload(const char *start, const char *end)
-{
-  const char *cursor = start;
-  while (cursor < end) {
-    if (*cursor == '\\' && cursor + 1 < end) {
-      ++cursor;
-      Serial.write(*cursor++);
-      continue;
-    }
-    Serial.write(*cursor++);
-  }
-}
-
 void captureCalibrationImageUsbOnly()
 {
   if (!usbDebugActive) {
@@ -755,10 +905,11 @@ void captureCalibrationImageUsbOnly()
 
   char error[STATUS_BUFFER_SIZE] = "";
   JsonDocument response;
-  if (!sendSscmaCommand(SSCMA_INVOKE_IMAGE_COMMAND, error, sizeof(error)) ||
+  flushSscmaInput();
+  if (!sendSscmaCommand(SSCMA_SAMPLE_IMAGE_COMMAND, error, sizeof(error)) ||
       !waitForExpectedJson(
           CMD_TYPE_RESPONSE,
-          "INVOKE",
+          "SAMPLE",
           SSCMA_RESPONSE_TIMEOUT_MS,
           response,
           error,
@@ -778,21 +929,25 @@ void captureCalibrationImageUsbOnly()
       return;
     }
 
-    if (!rawMessageLooksLikeInvokeEvent(message.json)) {
+    JsonDocument sampleEvent;
+    const DeserializationError parseError =
+        deserializeJson(sampleEvent, static_cast<const char *>(message.json));
+    if (parseError) {
       consumeRawSscmaMessage(message);
       continue;
     }
 
-    const char *imageStart = findJsonStringValue(message.json, "\"image\":\"");
-    if (imageStart == nullptr) {
+    const int type = sampleEvent["type"] | -1;
+    const int code = sampleEvent["code"] | -1;
+    const char *name = sampleEvent["name"] | "";
+    if (type != CMD_TYPE_EVENT || code != CMD_OK || strcmp(name, "SAMPLE") != 0) {
       consumeRawSscmaMessage(message);
-      printUsbOnlyStatus("error", "calibration_capture_empty_image");
-      return;
+      continue;
     }
 
-    const char *imageEnd = nullptr;
-    const size_t imageLength = jsonStringDecodedLength(imageStart, &imageEnd);
-    if (imageEnd == nullptr || imageLength == 0) {
+    const char *image = sampleEvent["data"]["image"] | "";
+    const size_t imageLength = strlen(image);
+    if (imageLength == 0) {
       consumeRawSscmaMessage(message);
       printUsbOnlyStatus("error", "calibration_capture_empty_image");
       return;
@@ -806,8 +961,7 @@ void captureCalibrationImageUsbOnly()
         CALIBRATION_IMAGE_BEGIN_PREFIX,
         static_cast<unsigned long>(imageLength));
     Serial.println(beginLine);
-    printJsonStringPayload(imageStart, imageEnd);
-    Serial.println();
+    Serial.println(image);
     Serial.println(CALIBRATION_IMAGE_END);
     consumeRawSscmaMessage(message);
     return;
@@ -819,6 +973,22 @@ void captureCalibrationImageUsbOnly()
 void printModuleInfoUsbOnly()
 {
   printUsbOnlyStatus("status", aiReady ? "ai_ready" : "ai_not_ready");
+  char line[STATUS_BUFFER_SIZE];
+  snprintf(
+      line,
+      sizeof(line),
+      "#status,ai_init_attempts,%lu",
+      static_cast<unsigned long>(aiInitAttemptCount));
+  Serial.println(line);
+  snprintf(
+      line,
+      sizeof(line),
+      "#status,ai_i2c_errors,%u,%u,%u,%u",
+      static_cast<unsigned int>(lastSscmaProbeError),
+      static_cast<unsigned int>(lastSscmaWriteError),
+      static_cast<unsigned int>(lastSscmaAvailableError),
+      static_cast<unsigned int>(lastSscmaReadError));
+  Serial.println(line);
   if (aiId[0] != '\0') {
     printUsbOnlyStatusValue("status", "ai_id", aiId);
   }
@@ -827,6 +997,125 @@ void printModuleInfoUsbOnly()
   }
   if (aiInfo[0] != '\0') {
     printUsbOnlyStatusValue("status", "ai_info", aiInfo);
+  }
+}
+
+void printWifiStatusUsbOnly()
+{
+  printUsbOnlyStatus("status", udpReady ? "wifi_ap_ready" : "wifi_ap_not_ready");
+  if (wifiApDetails[0] != '\0') {
+    Serial.println(wifiApDetails);
+  }
+  char line[STATUS_BUFFER_SIZE];
+  snprintf(
+      line,
+      sizeof(line),
+      "#status,wifi_ap_runtime,%s,%s,%d,%u",
+      WiFi.softAPSSID().c_str(),
+      WiFi.softAPIP().toString().c_str(),
+      WiFi.channel(),
+      static_cast<unsigned int>(WiFi.softAPgetStationNum()));
+  Serial.println(line);
+
+  snprintf(
+      line,
+      sizeof(line),
+      "#status,udp_runtime,%lu,%lu,%lu,%lu,%lu,%lu,%lu",
+      static_cast<unsigned long>(udpPacketAttemptCount),
+      static_cast<unsigned long>(udpPacketSuccessCount),
+      static_cast<unsigned long>(udpPacketFailureCount),
+      static_cast<unsigned long>(udpBeginFailureCount),
+      static_cast<unsigned long>(udpWriteFailureCount),
+      static_cast<unsigned long>(udpEndFailureCount),
+      static_cast<unsigned long>(udpHeartbeatCount));
+  Serial.println(line);
+}
+
+void sendUdpTestUsbOnly()
+{
+  printUsbOnlyStatus("status", "udp_test_started");
+  const uint32_t startAttempts = udpPacketAttemptCount;
+  const uint32_t startSuccesses = udpPacketSuccessCount;
+  const uint32_t startFailures = udpPacketFailureCount;
+  for (uint8_t i = 0; i < 10; ++i) {
+    char line[STATUS_BUFFER_SIZE];
+    snprintf(
+        line,
+        sizeof(line),
+        "#status,udp_test,%u,%u",
+        static_cast<unsigned int>(i),
+        static_cast<unsigned int>(WiFi.softAPgetStationNum()));
+    sendUdpLine(line);
+    delay(100);
+  }
+  char line[STATUS_BUFFER_SIZE];
+  snprintf(
+      line,
+      sizeof(line),
+      "#status,udp_test_result,%lu,%lu,%lu",
+      static_cast<unsigned long>(udpPacketAttemptCount - startAttempts),
+      static_cast<unsigned long>(udpPacketSuccessCount - startSuccesses),
+      static_cast<unsigned long>(udpPacketFailureCount - startFailures));
+  Serial.println(line);
+  printUsbOnlyStatus("status", "udp_test_done");
+}
+
+void sendUdpHeartbeat()
+{
+  if (!udpReady) {
+    return;
+  }
+
+  const unsigned long now = millis();
+  if (now - lastUdpHeartbeatMs < UDP_HEARTBEAT_INTERVAL_MS) {
+    return;
+  }
+
+  lastUdpHeartbeatMs = now;
+  char line[STATUS_BUFFER_SIZE];
+  snprintf(
+      line,
+      sizeof(line),
+      "#status,udp_heartbeat,%lu,%u,%lu,%lu,%lu",
+      static_cast<unsigned long>(udpHeartbeatCount++),
+      static_cast<unsigned int>(WiFi.softAPgetStationNum()),
+      static_cast<unsigned long>(udpPacketAttemptCount),
+      static_cast<unsigned long>(udpPacketSuccessCount),
+      static_cast<unsigned long>(udpPacketFailureCount));
+  sendUdpLine(line);
+}
+
+void printRawAtResponseUsbOnly(const char *commandBody)
+{
+  if (!usbDebugActive) {
+    return;
+  }
+
+  char command[USB_COMMAND_BUFFER_SIZE + 6];
+  if (strncmp(commandBody, "AT+", 3) == 0) {
+    snprintf(command, sizeof(command), "%s\r\n", commandBody);
+  } else {
+    snprintf(command, sizeof(command), "AT+%s\r\n", commandBody);
+  }
+
+  char error[STATUS_BUFFER_SIZE] = "";
+  flushSscmaInput();
+  if (!sendSscmaCommand(command, error, sizeof(error))) {
+    printUsbOnlyStatusValue("error", "raw_at_failed", error);
+    return;
+  }
+
+  for (uint8_t i = 0; i < 4; ++i) {
+    RawSscmaMessage message;
+    if (!waitForRawSscmaMessage(message, 3000, error, sizeof(error))) {
+      if (i == 0) {
+        printUsbOnlyStatusValue("error", "raw_at_failed", error);
+      }
+      return;
+    }
+    Serial.print("#raw_at,");
+    Serial.println(message.json);
+    consumeRawSscmaMessage(message);
   }
 }
 
@@ -839,6 +1128,21 @@ void handleUsbCommand(const char *command)
 
   if (strcmp(command, USB_MODULE_INFO_COMMAND) == 0) {
     printModuleInfoUsbOnly();
+    return;
+  }
+
+  if (strcmp(command, USB_WIFI_STATUS_COMMAND) == 0) {
+    printWifiStatusUsbOnly();
+    return;
+  }
+
+  if (strcmp(command, USB_UDP_TEST_COMMAND) == 0) {
+    sendUdpTestUsbOnly();
+    return;
+  }
+
+  if (strncmp(command, USB_RAW_AT_COMMAND_PREFIX, strlen(USB_RAW_AT_COMMAND_PREFIX)) == 0) {
+    printRawAtResponseUsbOnly(command + strlen(USB_RAW_AT_COMMAND_PREFIX));
     return;
   }
 
@@ -889,15 +1193,16 @@ void setup()
 
   if (!initializeAiModule()) {
     aiReady = false;
-    return;
+  } else {
+    aiReady = true;
   }
-
-  aiReady = true;
 }
 
 void loop()
 {
   updateUsbDebugMode();
   handleUsbSerialCommands();
+  sendUdpHeartbeat();
+  retryAiInitialization();
   logDetections();
 }

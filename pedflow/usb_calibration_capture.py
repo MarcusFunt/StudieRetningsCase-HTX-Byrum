@@ -46,6 +46,7 @@ def decode_calibration_image_payload(payload: str) -> bytes:
     except binascii.Error as exc:
         raise ValueError("Calibration image payload is not valid base64") from exc
 
+    image = image.rstrip(b"\x00")
     if len(image) < 4 or not image.startswith(b"\xff\xd8") or not image.endswith(b"\xff\xd9"):
         raise ValueError("Calibration image payload is not a JPEG")
     return image

@@ -29,6 +29,8 @@ def test_field_firmware_invokes_detection_without_image_payloads():
     assert "timestamp_ms,frame_id,detection_id,bbox_x,bbox_y,bbox_w,bbox_h,confidence,target" in source
     assert "#error,ai_invoke_failed" in source
     assert "ai_begin_failed" in source
+    assert "SSCMA_RESET_PIN = D3" in source
+    assert "resetSscmaModule" in source
     assert "AI.invoke(" not in source
 
 
@@ -37,8 +39,9 @@ def test_calibration_image_capture_is_usb_serial_only():
     lower_source = source.lower()
 
     assert 'USB_CALIBRATION_CAPTURE_COMMAND[] = "CALIB_CAPTURE"' in source
-    assert 'SSCMA_INVOKE_IMAGE_COMMAND[] = "AT+INVOKE=1,0,0\\r\\n"' in source
-    assert "printJsonStringPayload(imageStart, imageEnd)" in source
+    assert 'SSCMA_SAMPLE_IMAGE_COMMAND[] = "AT+SAMPLE=1\\r\\n"' in source
+    assert 'strcmp(name, "SAMPLE")' in source
+    assert 'sampleEvent["data"]["image"]' in source
     assert "#calibration_image_begin" in source
     assert "Serial.println(CALIBRATION_IMAGE_END)" in source
     assert "parsepacket" not in lower_source
@@ -56,7 +59,13 @@ def test_field_firmware_sends_anonymous_rows_over_wifi_udp():
     assert "WiFi.softAP(" in source
     assert "PEDFLOW_WIFI_AP_SSID" in source
     assert "PEDFLOW_WIFI_AP_PASSWORD" in source
-    assert "udp.beginPacket(WIFI_UDP_BROADCAST, WIFI_UDP_PORT)" in source
+    assert "udp.beginPacket(destination, WIFI_UDP_PORT)" in source
+    assert "udp.endPacket()" in source
+    assert "WIFI_UDP_BROADCAST" in source
+    assert "WiFi.softAPgetStationNum()" in source
+    assert "IPAddress(192, 168, 4, host)" in source
+    assert "udpPacketFailureCount" in source
+    assert "#status,udp_heartbeat" in source
     assert "4210" in source
     assert "WIFI_AP_PASSWORD[]" not in source
 
