@@ -43,6 +43,8 @@ from .ui_helpers import (
 from .usb_calibration_capture import capture_usb_calibration_photos
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+INTRINSICS_IMAGE_DIR = "data/calibration_images/charuco"
+GROUND_IMAGE_DIR = "data/calibration_images/ground"
 
 
 def _status_html(title: str, message: str, kind: str = "info") -> str:
@@ -212,9 +214,9 @@ class OperationsPanel:
         )
 
         self.image_output_dir = pn.widgets.Select(
-            name="Image folder",
+            name="Calibration image folder",
             options=image_dir_options,
-            value=keep_or_first("data/calibration_images/charuco", image_dir_options),
+            value=keep_or_first(INTRINSICS_IMAGE_DIR, image_dir_options),
         )
         self.image_port = pn.widgets.Select(
             name="USB serial port",
@@ -463,7 +465,7 @@ class OperationsPanel:
         return directory_options(
             self.project_root,
             ("data/calibration_images",),
-            ("data/calibration_images/charuco",),
+            (INTRINSICS_IMAGE_DIR, GROUND_IMAGE_DIR),
         )
 
     def _board_output_options(self) -> list[str]:
@@ -557,7 +559,7 @@ class OperationsPanel:
             output_dir = resolve_path(self.project_root, str(self.image_output_dir.value))
             log(f"USB image capture on {self.image_port.value} at {self.image_baud.value} baud")
             log(
-                "OpenCV calibration photos will be saved in "
+                "USB calibration/reference photos will be saved in "
                 f"{display_path(self.project_root, output_dir)}"
             )
             captures = capture_usb_calibration_photos(

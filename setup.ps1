@@ -87,6 +87,7 @@ Write-Step "Preparing local data and output folders"
 $Folders = @(
     "data\detections",
     "data\calibration_images\charuco",
+    "data\calibration_images\ground",
     "data\calibration_images\checkerboard",
     "outputs",
     "outputs\analysis"

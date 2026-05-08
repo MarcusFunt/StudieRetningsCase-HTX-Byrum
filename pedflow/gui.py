@@ -66,6 +66,8 @@ except ImportError:
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+INTRINSICS_IMAGE_DIR = "data/calibration_images/charuco"
+GROUND_IMAGE_DIR = "data/calibration_images/ground"
 
 pn.extension("tabulator")
 pn.config.sizing_mode = "stretch_width"
@@ -238,6 +240,30 @@ body {
   border-radius: 8px;
   margin: -2px 0 6px;
   padding: 12px;
+}
+.pedflow-workflow-note {
+  background: #f8fbfc;
+  border: 1px solid var(--pedflow-line);
+  border-radius: 8px;
+  box-sizing: border-box;
+  color: var(--pedflow-muted);
+  font-size: 13px;
+  margin: 0 0 12px;
+  padding: 14px 16px;
+}
+.pedflow-workflow-note strong {
+  color: var(--pedflow-ink);
+  display: block;
+  font-size: 14px;
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+.pedflow-workflow-note ol {
+  margin: 0 0 0 18px;
+  padding: 0;
+}
+.pedflow-workflow-note li {
+  margin: 4px 0;
 }
 .pedflow-empty {
   align-items: center;
@@ -437,6 +463,19 @@ def _section_title(title: str, eyebrow: str) -> pn.pane.HTML:
         </div>
         """,
         margin=(0, 0, 2, 0),
+    )
+
+
+def _workflow_note(title: str, steps: tuple[str, ...]) -> pn.pane.HTML:
+    items = "".join(f"<li>{html.escape(step)}</li>" for step in steps)
+    return pn.pane.HTML(
+        f"""
+        <div class="pedflow-workflow-note">
+          <strong>{html.escape(title)}</strong>
+          <ol>{items}</ol>
+        </div>
+        """,
+        sizing_mode="stretch_width",
     )
 
 
@@ -890,7 +929,8 @@ class CalibrationPanel:
 
         board_output_options = self._board_output_options()
         board_metadata_options = self._board_metadata_options()
-        image_dir_options = self._calibration_image_dir_options()
+        intrinsics_image_dir_options = self._intrinsics_image_dir_options()
+        ground_image_dir_options = self._ground_image_dir_options()
         intrinsics_options = self._intrinsics_options()
         marker_options = self._marker_options()
         calibration_output_options = self._calibration_output_options()
@@ -921,11 +961,29 @@ class CalibrationPanel:
         )
         self.board_status = pn.pane.HTML(_status_html("Ready", "Generate a printable ChArUco board."))
 
-        self.image_dir = pn.widgets.Select(
-            name="ChArUco image folder",
-            options=image_dir_options,
-            value=keep_or_first("data/calibration_images/charuco", image_dir_options),
+        self.intrinsics_workflow = _workflow_note(
+            "Camera intrinsics",
+            (
+                "Use the ChArUco board metadata from the board tab.",
+                f"Save only ChArUco board photos in {INTRINSICS_IMAGE_DIR}.",
+                "Run intrinsics calibration and keep the resulting JSON for the ground step.",
+            ),
         )
+        self.homography_workflow = _workflow_note(
+            "Ground homography",
+            (
+                f"Save ground marker reference photos in {GROUND_IMAGE_DIR}.",
+                "Fill the marker CSV with pixel positions from those ground photos.",
+                "Build the final calibration from the intrinsics JSON plus marker CSV.",
+            ),
+        )
+
+        self.intrinsics_image_dir = pn.widgets.Select(
+            name="Intrinsics ChArUco photo folder",
+            options=intrinsics_image_dir_options,
+            value=keep_or_first(INTRINSICS_IMAGE_DIR, intrinsics_image_dir_options),
+        )
+        self.image_dir = self.intrinsics_image_dir
         self.board_metadata_path = pn.widgets.Select(
             name="Board metadata JSON",
             options=board_metadata_options,
@@ -953,7 +1011,7 @@ class CalibrationPanel:
             start=0.0,
         )
         self.capture_usb_photo_button = pn.widgets.Button(
-            name="Take USB calibration photo",
+            name="Take intrinsics photo",
             button_type="primary",
             height=42,
         )
@@ -966,11 +1024,54 @@ class CalibrationPanel:
         self.capture_status = pn.pane.HTML(
             _status_html(
                 "USB only",
-                "Photos are requested from the local USB serial port and saved to the selected image folder.",
+                "Intrinsics photos are requested over USB serial and saved to the ChArUco folder.",
             )
         )
         self.intrinsics_status = pn.pane.HTML(
-            _status_html("Ready", "Place calibration images in the selected folder.")
+            _status_html("Ready", "Use ChArUco board photos from the intrinsics folder.")
+        )
+
+        self.ground_image_dir = pn.widgets.Select(
+            name="Ground marker photo folder",
+            options=ground_image_dir_options,
+            value=keep_or_first(GROUND_IMAGE_DIR, ground_image_dir_options),
+        )
+        self.ground_capture_port = pn.widgets.Select(
+            name="USB serial port",
+            options=port_options,
+            value=keep_or_first("COM5", port_options),
+        )
+        self.ground_capture_baud = pn.widgets.IntInput(name="Baud", value=115200, start=9600)
+        self.ground_capture_basename = pn.widgets.TextInput(
+            name="Photo basename",
+            value="ground_markers_usb",
+        )
+        self.ground_capture_count = pn.widgets.IntInput(name="Photos", value=1, start=1)
+        self.ground_capture_interval_s = pn.widgets.FloatInput(
+            name="Interval (s)",
+            value=1.0,
+            start=0.0,
+        )
+        self.ground_capture_timeout_s = pn.widgets.FloatInput(
+            name="Timeout (s)",
+            value=30.0,
+            start=1.0,
+        )
+        self.ground_capture_settle_delay_s = pn.widgets.FloatInput(
+            name="USB settle delay (s)",
+            value=2.0,
+            start=0.0,
+        )
+        self.ground_capture_usb_photo_button = pn.widgets.Button(
+            name="Take ground marker photo",
+            button_type="primary",
+            height=42,
+        )
+        self.ground_capture_status = pn.pane.HTML(
+            _status_html(
+                "USB only",
+                "Ground marker photos are saved separately for filling the marker CSV.",
+            )
         )
 
         self.intrinsics_path = pn.widgets.Select(
@@ -1004,6 +1105,7 @@ class CalibrationPanel:
         self.refresh_homography_files_button.on_click(self._on_refresh_calibration_files)
         self.generate_board_button.on_click(self._on_generate_board)
         self.capture_usb_photo_button.on_click(self._on_capture_usb_photo)
+        self.ground_capture_usb_photo_button.on_click(self._on_capture_ground_photo)
         self.calibrate_intrinsics_button.on_click(self._on_calibrate_intrinsics)
         self.compute_homography_button.on_click(self._on_compute_homography)
 
@@ -1053,10 +1155,11 @@ class CalibrationPanel:
 
     def _intrinsics_panel(self) -> pn.Column:
         return pn.Column(
+            self.intrinsics_workflow,
             pn.Row(
                 pn.Column(
-                    _section_title("Image set", "Intrinsics"),
-                    self.image_dir,
+                    _section_title("Step 1", "ChArUco image set"),
+                    self.intrinsics_image_dir,
                     self.board_metadata_path,
                     self.intrinsics_output_path,
                     self.min_corners,
@@ -1065,7 +1168,7 @@ class CalibrationPanel:
                     css_classes=["pedflow-controls"],
                 ),
                 pn.Column(
-                    _section_title("USB photo capture", "Calibration"),
+                    _section_title("Step 2", "USB intrinsics photos"),
                     self.capture_port,
                     self.capture_baud,
                     self.capture_basename,
@@ -1084,9 +1187,23 @@ class CalibrationPanel:
 
     def _homography_panel(self) -> pn.Column:
         return pn.Column(
+            self.homography_workflow,
             pn.Row(
                 pn.Column(
-                    _section_title("Marker mapping", "Homography"),
+                    _section_title("Step 1", "Ground marker photos"),
+                    self.ground_image_dir,
+                    self.ground_capture_port,
+                    self.ground_capture_baud,
+                    self.ground_capture_basename,
+                    self.ground_capture_count,
+                    self.ground_capture_interval_s,
+                    self.ground_capture_timeout_s,
+                    self.ground_capture_settle_delay_s,
+                    self.ground_capture_usb_photo_button,
+                    css_classes=["pedflow-controls"],
+                ),
+                pn.Column(
+                    _section_title("Step 2", "Marker mapping and output"),
                     self.intrinsics_path,
                     self.markers_csv,
                     self.calibration_output_path,
@@ -1097,6 +1214,7 @@ class CalibrationPanel:
                 ),
                 css_classes=["pedflow-layout"],
             ),
+            self.ground_capture_status,
             self.homography_status,
         )
 
@@ -1110,11 +1228,25 @@ class CalibrationPanel:
             ("outputs/charuco_board/charuco_board.json",),
         )
 
+    def _intrinsics_image_dir_options(self) -> list[str]:
+        return directory_options(
+            self.project_root,
+            (INTRINSICS_IMAGE_DIR,),
+            (INTRINSICS_IMAGE_DIR,),
+        )
+
+    def _ground_image_dir_options(self) -> list[str]:
+        return directory_options(
+            self.project_root,
+            (GROUND_IMAGE_DIR,),
+            (GROUND_IMAGE_DIR,),
+        )
+
     def _calibration_image_dir_options(self) -> list[str]:
         return directory_options(
             self.project_root,
             ("data/calibration_images",),
-            ("data/calibration_images/charuco",),
+            (INTRINSICS_IMAGE_DIR, GROUND_IMAGE_DIR),
         )
 
     def _intrinsics_options(self) -> list[str]:
@@ -1141,7 +1273,8 @@ class CalibrationPanel:
     def _on_refresh_calibration_files(self, _event: object) -> None:
         board_output_options = self._board_output_options()
         board_metadata_options = self._board_metadata_options()
-        image_dir_options = self._calibration_image_dir_options()
+        intrinsics_image_dir_options = self._intrinsics_image_dir_options()
+        ground_image_dir_options = self._ground_image_dir_options()
         intrinsics_options = self._intrinsics_options()
         marker_options = self._marker_options()
         calibration_output_options = self._calibration_output_options()
@@ -1154,10 +1287,23 @@ class CalibrationPanel:
             str(self.board_metadata_path.value),
             board_metadata_options,
         )
-        self.image_dir.options = image_dir_options
-        self.image_dir.value = keep_or_first(str(self.image_dir.value), image_dir_options)
+        self.intrinsics_image_dir.options = intrinsics_image_dir_options
+        self.intrinsics_image_dir.value = keep_or_first(
+            str(self.intrinsics_image_dir.value),
+            intrinsics_image_dir_options,
+        )
+        self.ground_image_dir.options = ground_image_dir_options
+        self.ground_image_dir.value = keep_or_first(
+            str(self.ground_image_dir.value),
+            ground_image_dir_options,
+        )
         self.capture_port.options = port_options
         self.capture_port.value = keep_or_first(str(self.capture_port.value), port_options)
+        self.ground_capture_port.options = port_options
+        self.ground_capture_port.value = keep_or_first(
+            str(self.ground_capture_port.value),
+            port_options,
+        )
         self.intrinsics_output_path.options = intrinsics_options
         self.intrinsics_output_path.value = keep_or_first(
             str(self.intrinsics_output_path.value),
@@ -1214,6 +1360,22 @@ class CalibrationPanel:
             preview = _preview_empty("Board preview appears after generation.")
         self.board_preview[:] = [preview]
 
+    def _ensure_separate_image_folders(self) -> None:
+        intrinsics_dir = _resolve_path(self.project_root, str(self.intrinsics_image_dir.value))
+        ground_dir = _resolve_path(self.project_root, str(self.ground_image_dir.value))
+        if intrinsics_dir.resolve() == ground_dir.resolve():
+            raise ValueError(
+                "Intrinsics photos and ground marker photos must use different folders."
+            )
+
+    def _saved_capture_names(self, captures: list[object]) -> str:
+        saved_names = ", ".join(
+            _display_path(self.project_root, capture.image_path) for capture in captures[:3]
+        )
+        if len(captures) > 3:
+            saved_names = f"{saved_names}, ..."
+        return saved_names
+
     def _on_capture_usb_photo(self, _event: object) -> None:
         self.capture_usb_photo_button.loading = True
         self.capture_status.object = _status_html(
@@ -1222,7 +1384,8 @@ class CalibrationPanel:
         )
 
         try:
-            output_dir = _resolve_path(self.project_root, self.image_dir.value)
+            self._ensure_separate_image_folders()
+            output_dir = _resolve_path(self.project_root, str(self.intrinsics_image_dir.value))
             captures = capture_usb_calibration_photos(
                 port=str(self.capture_port.value),
                 baud=int(self.capture_baud.value),
@@ -1233,32 +1396,65 @@ class CalibrationPanel:
                 settle_delay_s=float(self.capture_settle_delay_s.value),
                 timeout_s=float(self.capture_timeout_s.value),
             )
-            saved_names = ", ".join(
-                _display_path(self.project_root, capture.image_path) for capture in captures[:3]
-            )
-            if len(captures) > 3:
-                saved_names = f"{saved_names}, ..."
+            saved_names = self._saved_capture_names(captures)
             self._on_refresh_calibration_files(_event)
             self.capture_status.object = _status_html(
                 "Complete",
-                f"Saved {len(captures)} USB calibration photo(s): {saved_names}.",
+                f"Saved {len(captures)} intrinsics photo(s): {saved_names}.",
                 kind="success",
             )
         except Exception as exc:
             self.capture_status.object = _status_html(
-                "USB photo capture failed",
+                "Intrinsics photo capture failed",
                 str(exc),
                 kind="danger",
             )
         finally:
             self.capture_usb_photo_button.loading = False
 
+    def _on_capture_ground_photo(self, _event: object) -> None:
+        self.ground_capture_usb_photo_button.loading = True
+        self.ground_capture_status.object = _status_html(
+            "Running",
+            f"Requesting ground marker photo over USB serial on {self.ground_capture_port.value}.",
+        )
+
+        try:
+            self._ensure_separate_image_folders()
+            output_dir = _resolve_path(self.project_root, str(self.ground_image_dir.value))
+            captures = capture_usb_calibration_photos(
+                port=str(self.ground_capture_port.value),
+                baud=int(self.ground_capture_baud.value),
+                output_dir=output_dir,
+                basename=str(self.ground_capture_basename.value),
+                count=int(self.ground_capture_count.value),
+                interval_s=float(self.ground_capture_interval_s.value),
+                settle_delay_s=float(self.ground_capture_settle_delay_s.value),
+                timeout_s=float(self.ground_capture_timeout_s.value),
+            )
+            saved_names = self._saved_capture_names(captures)
+            self._on_refresh_calibration_files(_event)
+            self.ground_capture_status.object = _status_html(
+                "Complete",
+                f"Saved {len(captures)} ground marker photo(s): {saved_names}.",
+                kind="success",
+            )
+        except Exception as exc:
+            self.ground_capture_status.object = _status_html(
+                "Ground marker photo capture failed",
+                str(exc),
+                kind="danger",
+            )
+        finally:
+            self.ground_capture_usb_photo_button.loading = False
+
     def _on_calibrate_intrinsics(self, _event: object) -> None:
         self.calibrate_intrinsics_button.loading = True
         self.intrinsics_status.object = _status_html("Running", "Calibrating camera intrinsics.")
 
         try:
-            image_dir = _resolve_path(self.project_root, self.image_dir.value)
+            self._ensure_separate_image_folders()
+            image_dir = _resolve_path(self.project_root, str(self.intrinsics_image_dir.value))
             image_paths = sorted(
                 list(image_dir.glob("*.jpg"))
                 + list(image_dir.glob("*.jpeg"))
@@ -1297,6 +1493,7 @@ class CalibrationPanel:
         self.homography_status.object = _status_html("Running", "Building ground calibration.")
 
         try:
+            self._ensure_separate_image_folders()
             intrinsics_path = _resolve_path(self.project_root, self.intrinsics_path.value)
             markers_path = _resolve_path(self.project_root, self.markers_csv.value)
             output_path = _resolve_path(self.project_root, self.calibration_output_path.value)

@@ -40,9 +40,17 @@ def test_primary_workflow_controls_are_selectors_instead_of_path_text_inputs():
 
     assert isinstance(analysis.detections_path, pn.widgets.Select)
     assert isinstance(analysis.calibration_path, pn.widgets.Select)
+    assert isinstance(calibration.intrinsics_image_dir, pn.widgets.Select)
     assert isinstance(calibration.image_dir, pn.widgets.Select)
+    assert calibration.image_dir is calibration.intrinsics_image_dir
+    assert isinstance(calibration.ground_image_dir, pn.widgets.Select)
+    assert calibration.intrinsics_image_dir.value != calibration.ground_image_dir.value
+    assert "data/calibration_images/ground" not in calibration.intrinsics_image_dir.options
+    assert "data/calibration_images/charuco" not in calibration.ground_image_dir.options
     assert isinstance(calibration.capture_port, pn.widgets.Select)
     assert isinstance(calibration.capture_usb_photo_button, pn.widgets.Button)
+    assert isinstance(calibration.ground_capture_port, pn.widgets.Select)
+    assert isinstance(calibration.ground_capture_usb_photo_button, pn.widgets.Button)
     assert isinstance(calibration.intrinsics_path, pn.widgets.Select)
     assert isinstance(debug.port, pn.widgets.Select)
     assert isinstance(operations.capture_serial_port, pn.widgets.Select)

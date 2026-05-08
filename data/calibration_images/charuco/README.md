@@ -1,6 +1,8 @@
 # ChArUco Calibration Images
 
-Use the Panel `Calibration` -> `Camera Intrinsics` tab to take USB-only ChArUco calibration photos into this folder, or place manually captured ChArUco board images here.
+Use the Panel `Calibration` -> `Camera Intrinsics` tab to take USB-only ChArUco board photos into this folder, or place manually captured ChArUco board images here.
+
+Do not store ground marker reference photos here. Those belong in `data/calibration_images/ground/`.
 
 Generate the printable board and metadata with:
 
