@@ -24,10 +24,12 @@ def test_field_firmware_has_no_live_stream_or_network_capture_api():
 def test_field_firmware_invokes_detection_without_image_payloads():
     source = SKETCH.read_text(encoding="utf-8")
 
-    assert "AI.invoke(1, false, false)" in source
+    assert 'SSCMA_INVOKE_DETECTIONS_COMMAND[] = "AT+INVOKE=1,0,1\\r\\n"' in source
+    assert "invokeForDetections" in source
     assert "timestamp_ms,frame_id,detection_id,bbox_x,bbox_y,bbox_w,bbox_h,confidence,target" in source
     assert "#error,ai_invoke_failed" in source
     assert "ai_begin_failed" in source
+    assert "AI.invoke(" not in source
 
 
 def test_calibration_image_capture_is_usb_serial_only():
@@ -35,10 +37,10 @@ def test_calibration_image_capture_is_usb_serial_only():
     lower_source = source.lower()
 
     assert 'USB_CALIBRATION_CAPTURE_COMMAND[] = "CALIB_CAPTURE"' in source
-    assert "AI.invoke(1, false, true)" in source
-    assert "AI.last_image()" in source
+    assert 'SSCMA_INVOKE_IMAGE_COMMAND[] = "AT+INVOKE=1,0,0\\r\\n"' in source
+    assert "printJsonStringPayload(imageStart, imageEnd)" in source
     assert "#calibration_image_begin" in source
-    assert "Serial.println(image)" in source
+    assert "Serial.println(CALIBRATION_IMAGE_END)" in source
     assert "parsepacket" not in lower_source
     assert "udp.read" not in lower_source
     assert "sendUdpLine(image" not in source

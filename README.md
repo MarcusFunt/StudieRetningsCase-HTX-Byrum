@@ -54,7 +54,7 @@ It also prints the same CSV rows over USB serial at 115200 baud:
 timestamp_ms,frame_id,detection_id,bbox_x,bbox_y,bbox_w,bbox_h,confidence,target
 ```
 
-The Seeed SSCMA library reports boxes as center `x,y,w,h`. The sketch converts them to top-left `bbox_x,bbox_y,bbox_w,bbox_h`, and converts `score` from `0-100` to confidence `0.0-1.0`.
+The Grove Vision AI V2 AT protocol reports boxes as center `x,y,w,h`. The sketch converts them to top-left `bbox_x,bbox_y,bbox_w,bbox_h`, and converts `score` from `0-100` to confidence `0.0-1.0`.
 
 Capture a session from a PC over Wi-Fi:
 
