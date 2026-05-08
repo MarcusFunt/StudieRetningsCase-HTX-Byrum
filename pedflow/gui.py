@@ -27,6 +27,7 @@ try:
     )
     from .debug_panel import UsbDebugPanel
     from .geometry import load_calibration, save_calibration
+    from .operations_panel import OperationsPanel
     from .ui_helpers import (
         directory_options,
         display_path,
@@ -52,6 +53,7 @@ except ImportError:
     )
     from pedflow.debug_panel import UsbDebugPanel
     from pedflow.geometry import load_calibration, save_calibration
+    from pedflow.operations_panel import OperationsPanel
     from pedflow.ui_helpers import (
         directory_options,
         display_path,
@@ -1329,6 +1331,7 @@ class PedFlowDashboard:
         self.analysis = AnalysisPanel(project_root)
         self.calibration = CalibrationPanel(project_root)
         self.debug = UsbDebugPanel(project_root)
+        self.operations = OperationsPanel(project_root)
 
     def panel(self) -> pn.template.FastListTemplate:
         template = pn.template.FastListTemplate(
@@ -1338,6 +1341,7 @@ class PedFlowDashboard:
                     ("Analysis", self.analysis.panel()),
                     ("Calibration", self.calibration.panel()),
                     ("USB Debug", self.debug.panel()),
+                    ("Operations", self.operations.panel()),
                     dynamic=True,
                     css_classes=["pedflow-tabs"],
                 )

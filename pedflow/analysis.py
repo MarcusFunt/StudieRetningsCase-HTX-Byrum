@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,38 +44,55 @@ def run_flow_analysis(
     detections: pd.DataFrame,
     calibration: dict,
     settings: FlowAnalysisSettings | None = None,
+    logger: Callable[[str], None] | None = None,
 ) -> FlowAnalysisResult:
     settings = settings or FlowAnalysisSettings()
+    log = logger or (lambda _message: None)
 
+    log("OpenCV: undistorting bbox foot points and applying ground homography")
     ground = detections_to_ground(
         detections,
         calibration,
         confidence_threshold=settings.confidence_threshold,
     )
+    log(f"OpenCV: kept {len(ground):,} calibrated ground detection row(s)")
+    log("Tracking: linking detections into pedestrian tracks")
     tracks = link_detections(
         ground,
         max_matching_speed_m_s=settings.max_matching_speed_m_s,
         close_after_s=settings.close_after_s,
         smoothing_alpha=settings.smoothing_alpha,
     )
+    raw_track_count = tracks["track_id"].nunique() if not tracks.empty else 0
+    log(f"Tracking: built {raw_track_count:,} raw track(s)")
     tracks = filter_short_tracks(
         tracks,
         min_duration_s=settings.min_track_duration_s,
         min_detections=settings.min_detections,
     )
+    filtered_track_count = tracks["track_id"].nunique() if not tracks.empty else 0
+    log(f"Tracking: kept {filtered_track_count:,} track(s) after duration/count filters")
+    log("PedPy: estimating individual speeds")
     tracks = estimate_speeds(tracks, window_s=settings.speed_window_s)
+    log("Metrics: marking dwell points")
     tracks = add_dwell_flags(
         tracks,
         stop_speed_threshold_m_s=settings.stop_speed_threshold_m_s,
         stop_duration_threshold_s=settings.stop_duration_threshold_s,
     )
+    log("Metrics: summarizing flow and per-track geometry")
+    summary = summarize_flow(tracks)
+    summaries = track_summaries(tracks)
+    log("PedPy: computing density, speed, and dwell grid profiles")
+    grid = grid_statistics(tracks, grid_size_m=settings.grid_size_m)
+    log(f"PedPy: produced {len(grid):,} occupied grid cell(s)")
 
     return FlowAnalysisResult(
         detections_ground=ground,
         tracks=tracks,
-        summary=summarize_flow(tracks),
-        track_summaries=track_summaries(tracks),
-        grid=grid_statistics(tracks, grid_size_m=settings.grid_size_m),
+        summary=summary,
+        track_summaries=summaries,
+        grid=grid,
     )
 
 

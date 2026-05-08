@@ -1,6 +1,9 @@
+import socket
 import subprocess
 import sys
+import time
 
+from pedflow.capture import UdpCsvCaptureWorker
 from scripts.capture_serial import CSV_COLUMNS, validate_csv_row
 from scripts.capture_wifi import DEFAULT_UDP_PORT, parse_udp_payload_lines
 
@@ -44,3 +47,47 @@ def test_capture_wifi_script_help_runs_from_repo_root():
     )
 
     assert "PedFlow sensor Wi-Fi UDP feed" in result.stdout
+
+
+def test_udp_capture_worker_writes_rows_and_metadata(tmp_path):
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+
+    output_path = tmp_path / "capture.csv"
+    worker = UdpCsvCaptureWorker(output_path=output_path, host="127.0.0.1", port=port)
+    worker.start()
+    try:
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            snapshot = worker.snapshot()
+            if any("capturing UDP CSV" in line for line in snapshot.log_lines):
+                break
+            assert snapshot.error is None
+            time.sleep(0.05)
+        else:
+            raise AssertionError("UDP worker did not start")
+
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+            sender.sendto(
+                b"#status,wifi_ap_ready\n100,1,0,10.5,20.0,4,8,0.700,0\n",
+                ("127.0.0.1", port),
+            )
+
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            snapshot = worker.snapshot()
+            if snapshot.rows_written == 1:
+                break
+            assert snapshot.error is None
+            time.sleep(0.05)
+        else:
+            raise AssertionError("UDP worker did not write the sample row")
+    finally:
+        worker.stop()
+
+    text = output_path.read_text(encoding="utf-8")
+    assert CSV_COLUMNS[0] in text
+    assert "100,1,0,10.5,20.0,4,8,0.700,0" in text
+    assert output_path.with_suffix(".metadata.json").exists()

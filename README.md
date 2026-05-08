@@ -136,11 +136,12 @@ Start the local Panel dashboard:
 
 ## Panel Dashboard
 
-The dashboard is the supported workflow. It has three top-level tabs:
+The dashboard is the supported workflow. It has four top-level tabs:
 
 - `Analysis`: pick discovered detection sessions and calibration files from dropdowns, upload files only when needed, tune advanced settings, view paths and heatmaps, inspect tables, and optionally write processed CSV outputs.
 - `Calibration`: generate the printable ChArUco board, take USB-only calibration photos, calibrate camera intrinsics from discovered image folders, and combine intrinsics with `data/ground_markers.csv` into `outputs/calibration.json`.
 - `USB Debug`: pick a detected USB serial port, start local testing, and view live boxes, contact points, tracks, and PedPy outputs.
+- `Operations`: run the repo scripts from the GUI, including Wi-Fi/USB CSV capture, USB-only calibration image capture, Wi-Fi secret generation, ChArUco board generation, and logged PedPy/OpenCV analysis runs.
 
 Generate the printable ChArUco board from the command line if needed:
 

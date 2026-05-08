@@ -1,0 +1,11 @@
+{
+  "capture_utc": "2026-05-08T16:56:33.978368+00:00",
+  "transport": "usb_serial",
+  "firmware_command": "CALIB_CAPTURE",
+  "port": "COM11",
+  "baud": 115200,
+  "output_path": "C:\\Users\\marcu\\Documents\\GitHub\\StudieRetningsCase-HTX-Byrum\\data\\calibration_images\\charuco\\charuco_usb_20260508T165633Z.jpg",
+  "jpeg_byte_count": 3742,
+  "image_sha256": "cb3f328d11823545595cbe10a6dec4490af6427c48d4217ffdefd6626ed06f02",
+  "privacy_note": "Calibration image capture is requested over local USB serial only. The firmware does not expose Wi-Fi image capture or streaming."
+}

@@ -16,7 +16,7 @@ def test_panel_gui_builds_expected_analysis_and_calibration_tabs():
 
     assert app.title == "Pedestrian Flow Logger"
     assert isinstance(top_tabs, pn.Tabs)
-    assert top_tabs._names == ["Analysis", "Calibration", "USB Debug"]
+    assert top_tabs._names == ["Analysis", "Calibration", "USB Debug", "Operations"]
     assert isinstance(calibration_tabs, pn.Tabs)
     assert calibration_tabs._names == [
         "ChArUco Board",
@@ -31,10 +31,12 @@ def test_primary_workflow_controls_are_selectors_instead_of_path_text_inputs():
 
     from pedflow.debug_panel import UsbDebugPanel
     from pedflow.gui import AnalysisPanel, CalibrationPanel
+    from pedflow.operations_panel import OperationsPanel
 
     analysis = AnalysisPanel(Path.cwd())
     calibration = CalibrationPanel(Path.cwd())
     debug = UsbDebugPanel(Path.cwd())
+    operations = OperationsPanel(Path.cwd())
 
     assert isinstance(analysis.detections_path, pn.widgets.Select)
     assert isinstance(analysis.calibration_path, pn.widgets.Select)
@@ -43,3 +45,6 @@ def test_primary_workflow_controls_are_selectors_instead_of_path_text_inputs():
     assert isinstance(calibration.capture_usb_photo_button, pn.widgets.Button)
     assert isinstance(calibration.intrinsics_path, pn.widgets.Select)
     assert isinstance(debug.port, pn.widgets.Select)
+    assert isinstance(operations.capture_serial_port, pn.widgets.Select)
+    assert isinstance(operations.image_port, pn.widgets.Select)
+    assert isinstance(operations.analysis_detections_path, pn.widgets.Select)
