@@ -26,6 +26,8 @@ try:
         read_marker_csv,
     )
     from .geometry import load_calibration, save_calibration
+    from .debug_panel import UsbDebugPanel
+    from .ui_helpers import directory_options, display_path, file_options, keep_or_first, resolve_path
 except ImportError:
     from pedflow.analysis import (
         FlowAnalysisResult,
@@ -41,6 +43,8 @@ except ImportError:
         read_marker_csv,
     )
     from pedflow.geometry import load_calibration, save_calibration
+    from pedflow.debug_panel import UsbDebugPanel
+    from pedflow.ui_helpers import directory_options, display_path, file_options, keep_or_first, resolve_path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -71,6 +75,9 @@ body {
 .bk-FastListTemplate {
   background: var(--pedflow-bg);
 }
+.bk-FastListTemplate .bk-main {
+  padding-top: 18px !important;
+}
 #header {
   box-shadow: 0 8px 24px rgba(15, 29, 38, 0.14);
 }
@@ -90,9 +97,30 @@ body {
   background-color: var(--pedflow-accent-strong) !important;
   border-color: var(--pedflow-accent-strong) !important;
 }
+.bk-btn-default {
+  background: #f8fbfc !important;
+  border: 1px solid var(--pedflow-line-strong) !important;
+  border-radius: 7px !important;
+  color: var(--pedflow-ink) !important;
+  font-weight: 650 !important;
+}
+.bk-btn-default:hover,
+.bk-btn-default:focus {
+  background: #edf5f6 !important;
+  border-color: var(--pedflow-accent) !important;
+}
 .pedflow-layout {
   align-items: flex-start;
   gap: 18px;
+}
+.pedflow-workspace {
+  align-items: stretch;
+}
+.pedflow-workspace > .pedflow-controls {
+  flex: 0 0 390px;
+}
+.pedflow-workspace > *:not(.pedflow-controls) {
+  min-width: 0;
 }
 .pedflow-controls {
   background: var(--pedflow-panel);
@@ -102,6 +130,12 @@ body {
   box-shadow: 0 10px 26px rgba(21, 32, 41, 0.05);
   min-width: 0;
   padding: 18px 18px 20px;
+}
+.pedflow-button-row {
+  gap: 10px;
+}
+.pedflow-button-row .bk-btn {
+  min-height: 42px;
 }
 .pedflow-section-title {
   border-bottom: 1px solid var(--pedflow-line);
@@ -150,16 +184,42 @@ body {
   object-fit: contain;
 }
 .pedflow-controls .bk-input,
+.pedflow-controls select,
 .pedflow-controls input[type="text"],
 .pedflow-controls input[type="number"],
 .pedflow-controls input[type="file"] {
   border-color: var(--pedflow-line-strong) !important;
   border-radius: 6px !important;
+  min-height: 38px;
 }
 .pedflow-controls .bk-input:focus,
+.pedflow-controls select:focus,
 .pedflow-controls input:focus {
   border-color: var(--pedflow-accent) !important;
   box-shadow: 0 0 0 3px var(--pedflow-focus) !important;
+}
+.pedflow-accordion {
+  border: 1px solid var(--pedflow-line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.pedflow-accordion button {
+  background: #ffffff !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--pedflow-line) !important;
+  color: var(--pedflow-ink) !important;
+  min-height: 42px;
+}
+.pedflow-accordion h3 {
+  font-size: 14px !important;
+  font-weight: 750 !important;
+}
+.pedflow-inline-section {
+  background: #f8fbfc;
+  border: 1px solid var(--pedflow-line);
+  border-radius: 8px;
+  margin: -2px 0 6px;
+  padding: 12px;
 }
 .pedflow-empty {
   align-items: center;
@@ -306,6 +366,9 @@ body {
     min-width: 0 !important;
     width: 100% !important;
   }
+  .pedflow-workspace > .pedflow-controls {
+    flex-basis: auto !important;
+  }
   .pedflow-tabs .bk-tab {
     padding-left: 10px;
     padding-right: 10px;
@@ -322,17 +385,11 @@ pn.config.raw_css.append(_UI_CSS)
 
 
 def _resolve_path(project_root: Path, value: str) -> Path:
-    path = Path(value).expanduser()
-    if not path.is_absolute():
-        path = project_root / path
-    return path
+    return resolve_path(project_root, value)
 
 
 def _display_path(project_root: Path, path: Path) -> str:
-    try:
-        return path.relative_to(project_root).as_posix()
-    except ValueError:
-        return str(path)
+    return display_path(project_root, path)
 
 
 def _rounded_frame(frame: pd.DataFrame, digits: int = 3) -> pd.DataFrame:
@@ -500,15 +557,27 @@ class AnalysisPanel:
         self.project_root = project_root
         self.result: FlowAnalysisResult | None = None
 
-        self.detections_path = pn.widgets.TextInput(
-            name="Detections CSV",
-            value="data/detections/session.csv",
+        detection_options = self._detection_options()
+        calibration_options = self._calibration_options()
+        output_options = self._output_options()
+        self.detections_path = pn.widgets.Select(
+            name="Detection session",
+            options=detection_options,
+            value=keep_or_first("data/detections/session.csv", detection_options),
         )
-        self.calibration_path = pn.widgets.TextInput(
-            name="Calibration JSON",
-            value="outputs/calibration.json",
+        self.calibration_path = pn.widgets.Select(
+            name="Calibration",
+            options=calibration_options,
+            value=keep_or_first("outputs/calibration.json", calibration_options),
         )
-        self.output_dir = pn.widgets.TextInput(name="Output folder", value="outputs/analysis")
+        self.output_dir = pn.widgets.Select(
+            name="Output folder",
+            options=output_options,
+            value=keep_or_first("outputs/analysis", output_options),
+        )
+        self.refresh_files_button = pn.widgets.Button(name="Refresh files", height=38)
+        self.upload_toggle_button = pn.widgets.Button(name="Upload files", height=38)
+        self.settings_toggle_button = pn.widgets.Button(name="Analysis settings", height=38)
         self.detections_upload = pn.widgets.FileInput(name="Upload detections CSV", accept=".csv,text/csv")
         self.calibration_upload = pn.widgets.FileInput(
             name="Upload calibration JSON",
@@ -562,40 +631,47 @@ class AnalysisPanel:
             dynamic=True,
             css_classes=["pedflow-tabs"],
         )
-
-        self.run_button.on_click(self._on_run)
-
-    def panel(self) -> pn.Column:
-        input_controls = pn.Column(
-            _section_title("Data sources", "Files"),
-            self.detections_path,
+        self.upload_section = pn.Column(
             self.detections_upload,
-            self.calibration_path,
             self.calibration_upload,
-            self.output_dir,
-            self.save_outputs,
-            self.run_button,
-            css_classes=["pedflow-controls"],
-            sizing_mode="stretch_width",
+            visible=False,
+            css_classes=["pedflow-inline-section"],
         )
-        tracking_controls = pn.Column(
-            _section_title("Tracking filters", "Association"),
+        self.settings_section = pn.Column(
             self.confidence_threshold,
             self.max_matching_speed,
             self.close_after,
             self.min_track_duration,
             self.min_detections,
             self.smoothing_alpha,
-            css_classes=["pedflow-controls"],
-            sizing_mode="stretch_width",
-        )
-        metric_controls = pn.Column(
-            _section_title("Metric windows", "Aggregation"),
             self.speed_window,
             self.stop_speed_threshold,
             self.stop_duration_threshold,
             self.grid_size,
+            visible=False,
+            css_classes=["pedflow-inline-section"],
+        )
+
+        self.refresh_files_button.on_click(self._on_refresh_files)
+        self.upload_toggle_button.on_click(self._on_toggle_upload)
+        self.settings_toggle_button.on_click(self._on_toggle_settings)
+        self.run_button.on_click(self._on_run)
+
+    def panel(self) -> pn.Column:
+        workflow_controls = pn.Column(
+            _section_title("Analyze session", "Workflow"),
+            self.detections_path,
+            self.calibration_path,
+            self.refresh_files_button,
+            self.save_outputs,
+            self.output_dir,
+            self.upload_toggle_button,
+            self.upload_section,
+            self.settings_toggle_button,
+            self.settings_section,
+            self.run_button,
             css_classes=["pedflow-controls"],
+            max_width=420,
             sizing_mode="stretch_width",
         )
         tables = pn.Tabs(
@@ -606,8 +682,7 @@ class AnalysisPanel:
             dynamic=True,
             css_classes=["pedflow-tabs"],
         )
-        return pn.Column(
-            pn.Row(input_controls, tracking_controls, metric_controls, css_classes=["pedflow-layout"]),
+        results = pn.Column(
             self.status,
             self.metrics,
             pn.Tabs(
@@ -617,6 +692,50 @@ class AnalysisPanel:
                 css_classes=["pedflow-tabs"],
             ),
             sizing_mode="stretch_width",
+        )
+        return pn.Column(
+            pn.Row(workflow_controls, results, css_classes=["pedflow-layout", "pedflow-workspace"]),
+            sizing_mode="stretch_width",
+        )
+
+    def _detection_options(self) -> list[str]:
+        return file_options(
+            self.project_root,
+            ("data/detections/*.csv", "data/detections/**/*.csv"),
+            ("data/detections/session.csv",),
+        )
+
+    def _calibration_options(self) -> list[str]:
+        return file_options(
+            self.project_root,
+            ("outputs/calibration*.json", "outputs/**/*.json"),
+            ("outputs/calibration.json",),
+        )
+
+    def _output_options(self) -> list[str]:
+        return directory_options(self.project_root, ("outputs",), ("outputs/analysis",))
+
+    def _on_refresh_files(self, _event: object) -> None:
+        detection_options = self._detection_options()
+        calibration_options = self._calibration_options()
+        output_options = self._output_options()
+        self.detections_path.options = detection_options
+        self.detections_path.value = keep_or_first(str(self.detections_path.value), detection_options)
+        self.calibration_path.options = calibration_options
+        self.calibration_path.value = keep_or_first(str(self.calibration_path.value), calibration_options)
+        self.output_dir.options = output_options
+        self.output_dir.value = keep_or_first(str(self.output_dir.value), output_options)
+
+    def _on_toggle_upload(self, _event: object) -> None:
+        self.upload_section.visible = not self.upload_section.visible
+        self.upload_toggle_button.name = (
+            "Hide upload files" if self.upload_section.visible else "Upload files"
+        )
+
+    def _on_toggle_settings(self, _event: object) -> None:
+        self.settings_section.visible = not self.settings_section.visible
+        self.settings_toggle_button.name = (
+            "Hide analysis settings" if self.settings_section.visible else "Analysis settings"
         )
 
     def _settings(self) -> FlowAnalysisSettings:
@@ -751,18 +870,31 @@ class CalibrationPanel:
     def __init__(self, project_root: Path) -> None:
         self.project_root = project_root
 
-        self.board_output_dir = pn.widgets.TextInput(
+        board_output_options = self._board_output_options()
+        board_metadata_options = self._board_metadata_options()
+        image_dir_options = self._calibration_image_dir_options()
+        intrinsics_options = self._intrinsics_options()
+        marker_options = self._marker_options()
+        calibration_output_options = self._calibration_output_options()
+
+        self.board_output_dir = pn.widgets.Select(
             name="Output folder",
-            value="outputs/charuco_board",
+            options=board_output_options,
+            value=keep_or_first("outputs/charuco_board", board_output_options),
         )
         self.board_basename = pn.widgets.TextInput(name="File basename", value="charuco_board")
         self.squares_x = pn.widgets.IntInput(name="Squares x", value=7, start=3)
         self.squares_y = pn.widgets.IntInput(name="Squares y", value=5, start=3)
         self.square_length_mm = pn.widgets.FloatInput(name="Square length (mm)", value=35.0)
         self.marker_length_mm = pn.widgets.FloatInput(name="Marker length (mm)", value=25.0)
-        self.dictionary = pn.widgets.TextInput(name="ArUco dictionary", value="DICT_5X5_100")
+        self.dictionary = pn.widgets.Select(
+            name="ArUco dictionary",
+            options=["DICT_4X4_50", "DICT_5X5_100", "DICT_6X6_250", "DICT_7X7_1000"],
+            value="DICT_5X5_100",
+        )
         self.dpi = pn.widgets.IntInput(name="DPI", value=300, start=72)
         self.margin_mm = pn.widgets.FloatInput(name="Margin (mm)", value=10.0)
+        self.refresh_board_files_button = pn.widgets.Button(name="Refresh files", height=38)
         self.generate_board_button = pn.widgets.Button(
             name="Generate board",
             button_type="primary",
@@ -770,19 +902,23 @@ class CalibrationPanel:
         )
         self.board_status = pn.pane.HTML(_status_html("Ready", "Generate a printable ChArUco board."))
 
-        self.image_dir = pn.widgets.TextInput(
+        self.image_dir = pn.widgets.Select(
             name="ChArUco image folder",
-            value="data/calibration_images/charuco",
+            options=image_dir_options,
+            value=keep_or_first("data/calibration_images/charuco", image_dir_options),
         )
-        self.board_metadata_path = pn.widgets.TextInput(
+        self.board_metadata_path = pn.widgets.Select(
             name="Board metadata JSON",
-            value="outputs/charuco_board/charuco_board.json",
+            options=board_metadata_options,
+            value=keep_or_first("outputs/charuco_board/charuco_board.json", board_metadata_options),
         )
-        self.intrinsics_output_path = pn.widgets.TextInput(
+        self.intrinsics_output_path = pn.widgets.Select(
             name="Intrinsics output JSON",
-            value="outputs/calibration_intrinsics.json",
+            options=intrinsics_options,
+            value=keep_or_first("outputs/calibration_intrinsics.json", intrinsics_options),
         )
         self.min_corners = pn.widgets.IntInput(name="Min corners per image", value=8, start=4)
+        self.refresh_intrinsics_files_button = pn.widgets.Button(name="Refresh files", height=38)
         self.calibrate_intrinsics_button = pn.widgets.Button(
             name="Calibrate intrinsics",
             button_type="primary",
@@ -792,19 +928,23 @@ class CalibrationPanel:
             _status_html("Ready", "Place calibration images in the selected folder.")
         )
 
-        self.intrinsics_path = pn.widgets.TextInput(
+        self.intrinsics_path = pn.widgets.Select(
             name="Intrinsics JSON",
-            value="outputs/calibration_intrinsics.json",
+            options=intrinsics_options,
+            value=keep_or_first("outputs/calibration_intrinsics.json", intrinsics_options),
         )
-        self.markers_csv = pn.widgets.TextInput(
+        self.markers_csv = pn.widgets.Select(
             name="Ground markers CSV",
-            value="data/ground_markers.csv",
+            options=marker_options,
+            value=keep_or_first("data/ground_markers.csv", marker_options),
         )
-        self.calibration_output_path = pn.widgets.TextInput(
+        self.calibration_output_path = pn.widgets.Select(
             name="Calibration output JSON",
-            value="outputs/calibration.json",
+            options=calibration_output_options,
+            value=keep_or_first("outputs/calibration.json", calibration_output_options),
         )
         self.ransac_threshold_m = pn.widgets.FloatInput(name="RANSAC threshold (m)", value=0.10)
+        self.refresh_homography_files_button = pn.widgets.Button(name="Refresh files", height=38)
         self.compute_homography_button = pn.widgets.Button(
             name="Build calibration",
             button_type="primary",
@@ -814,6 +954,9 @@ class CalibrationPanel:
             _status_html("Ready", "Use measured marker correspondences to build calibration.")
         )
 
+        self.refresh_board_files_button.on_click(self._on_refresh_calibration_files)
+        self.refresh_intrinsics_files_button.on_click(self._on_refresh_calibration_files)
+        self.refresh_homography_files_button.on_click(self._on_refresh_calibration_files)
         self.generate_board_button.on_click(self._on_generate_board)
         self.calibrate_intrinsics_button.on_click(self._on_calibrate_intrinsics)
         self.compute_homography_button.on_click(self._on_compute_homography)
@@ -841,6 +984,7 @@ class CalibrationPanel:
                     self.board_output_dir,
                     self.board_basename,
                     self.dictionary,
+                    self.refresh_board_files_button,
                     _section_title("Current board", "Preview"),
                     self.board_preview,
                     css_classes=["pedflow-controls"],
@@ -870,6 +1014,7 @@ class CalibrationPanel:
                     self.board_metadata_path,
                     self.intrinsics_output_path,
                     self.min_corners,
+                    self.refresh_intrinsics_files_button,
                     self.calibrate_intrinsics_button,
                     css_classes=["pedflow-controls"],
                 ),
@@ -887,12 +1032,83 @@ class CalibrationPanel:
                     self.markers_csv,
                     self.calibration_output_path,
                     self.ransac_threshold_m,
+                    self.refresh_homography_files_button,
                     self.compute_homography_button,
                     css_classes=["pedflow-controls"],
                 ),
                 css_classes=["pedflow-layout"],
             ),
             self.homography_status,
+        )
+
+    def _board_output_options(self) -> list[str]:
+        return directory_options(self.project_root, ("outputs",), ("outputs/charuco_board",))
+
+    def _board_metadata_options(self) -> list[str]:
+        return file_options(
+            self.project_root,
+            ("outputs/charuco_board/*.json", "outputs/**/*.json"),
+            ("outputs/charuco_board/charuco_board.json",),
+        )
+
+    def _calibration_image_dir_options(self) -> list[str]:
+        return directory_options(
+            self.project_root,
+            ("data/calibration_images",),
+            ("data/calibration_images/charuco",),
+        )
+
+    def _intrinsics_options(self) -> list[str]:
+        return file_options(
+            self.project_root,
+            ("outputs/calibration_intrinsics*.json", "outputs/**/*.json"),
+            ("outputs/calibration_intrinsics.json",),
+        )
+
+    def _marker_options(self) -> list[str]:
+        return file_options(
+            self.project_root,
+            ("data/ground_markers*.csv", "data/**/*.csv"),
+            ("data/ground_markers.csv",),
+        )
+
+    def _calibration_output_options(self) -> list[str]:
+        return file_options(
+            self.project_root,
+            ("outputs/calibration*.json", "outputs/**/*.json"),
+            ("outputs/calibration.json",),
+        )
+
+    def _on_refresh_calibration_files(self, _event: object) -> None:
+        board_output_options = self._board_output_options()
+        board_metadata_options = self._board_metadata_options()
+        image_dir_options = self._calibration_image_dir_options()
+        intrinsics_options = self._intrinsics_options()
+        marker_options = self._marker_options()
+        calibration_output_options = self._calibration_output_options()
+
+        self.board_output_dir.options = board_output_options
+        self.board_output_dir.value = keep_or_first(str(self.board_output_dir.value), board_output_options)
+        self.board_metadata_path.options = board_metadata_options
+        self.board_metadata_path.value = keep_or_first(
+            str(self.board_metadata_path.value),
+            board_metadata_options,
+        )
+        self.image_dir.options = image_dir_options
+        self.image_dir.value = keep_or_first(str(self.image_dir.value), image_dir_options)
+        self.intrinsics_output_path.options = intrinsics_options
+        self.intrinsics_output_path.value = keep_or_first(
+            str(self.intrinsics_output_path.value),
+            intrinsics_options,
+        )
+        self.intrinsics_path.options = intrinsics_options
+        self.intrinsics_path.value = keep_or_first(str(self.intrinsics_path.value), intrinsics_options)
+        self.markers_csv.options = marker_options
+        self.markers_csv.value = keep_or_first(str(self.markers_csv.value), marker_options)
+        self.calibration_output_path.options = calibration_output_options
+        self.calibration_output_path.value = keep_or_first(
+            str(self.calibration_output_path.value),
+            calibration_output_options,
         )
 
     def _on_generate_board(self, _event: object) -> None:
@@ -1013,6 +1229,7 @@ class PedFlowDashboard:
     def __init__(self, project_root: Path = PROJECT_ROOT) -> None:
         self.analysis = AnalysisPanel(project_root)
         self.calibration = CalibrationPanel(project_root)
+        self.debug = UsbDebugPanel(project_root)
 
     def panel(self) -> pn.template.FastListTemplate:
         template = pn.template.FastListTemplate(
@@ -1021,6 +1238,7 @@ class PedFlowDashboard:
                 pn.Tabs(
                     ("Analysis", self.analysis.panel()),
                     ("Calibration", self.calibration.panel()),
+                    ("USB Debug", self.debug.panel()),
                     dynamic=True,
                     css_classes=["pedflow-tabs"],
                 )

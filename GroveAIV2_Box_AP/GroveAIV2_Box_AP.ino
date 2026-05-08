@@ -25,6 +25,7 @@ const IPAddress WIFI_AP_SUBNET(255, 255, 255, 0);
 const IPAddress WIFI_UDP_BROADCAST(192, 168, 4, 255);
 
 bool udpReady = false;
+bool usbDebugActive = false;
 unsigned long lastInferenceMs = 0;
 unsigned long lastInvokeErrorLogMs = 0;
 uint32_t frameId = 0;
@@ -42,22 +43,43 @@ void sendUdpLine(const char *line)
   udp.endPacket();
 }
 
-void emitLine(const char *line)
+bool isUsbDebugActive()
 {
-  Serial.println(line);
+  return static_cast<bool>(Serial);
+}
+
+void emitTelemetryLine(const char *line)
+{
+  if (usbDebugActive) {
+    Serial.println(line);
+  }
   sendUdpLine(line);
+}
+
+void updateUsbDebugMode()
+{
+  const bool active = isUsbDebugActive();
+  if (active == usbDebugActive) {
+    return;
+  }
+
+  usbDebugActive = active;
+  if (usbDebugActive) {
+    Serial.println("#status,usb_debug_on");
+    Serial.println(CSV_HEADER);
+  }
 }
 
 void printCsvHeader()
 {
-  emitLine(CSV_HEADER);
+  emitTelemetryLine(CSV_HEADER);
 }
 
 void printStatus(const char *level, const char *code)
 {
   char line[STATUS_BUFFER_SIZE];
   snprintf(line, sizeof(line), "#%s,%s", level, code);
-  emitLine(line);
+  emitTelemetryLine(line);
 }
 
 void startWifiAccessPoint()
@@ -98,7 +120,7 @@ void printInvokeError(unsigned long now, int result)
       "#error,ai_invoke_failed,%d,%lu",
       result,
       static_cast<unsigned long>(invokeFailureCount));
-  emitLine(line);
+  emitTelemetryLine(line);
 }
 
 void printCsvRow(
@@ -125,7 +147,7 @@ void printCsvRow(
       static_cast<int>(box.h),
       static_cast<double>(confidence),
       static_cast<int>(box.target));
-  emitLine(line);
+  emitTelemetryLine(line);
 }
 
 void logDetections()
@@ -159,6 +181,7 @@ void logDetections()
 void setup()
 {
   Serial.begin(SERIAL_BAUD);
+  updateUsbDebugMode();
   startWifiAccessPoint();
   printCsvHeader();
   if (!AI.begin()) {
@@ -172,5 +195,6 @@ void setup()
 
 void loop()
 {
+  updateUsbDebugMode();
   logDetections();
 }

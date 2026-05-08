@@ -11,6 +11,7 @@ During normal data collection the firmware:
 - does not stream camera frames or detection previews
 - does not call image/JPEG capture APIs
 - sends only anonymous detection rows over Wi-Fi UDP and USB serial
+- enables local debug/testing output only when a USB serial connection is open
 
 Calibration images are separate manual inputs for OpenCV geometry calibration. They should be captured manually, avoid pedestrians, and be deleted after the calibration JSON is verified. The physical button must not be used to trigger automatic calibration capture.
 
@@ -55,6 +56,31 @@ python scripts/capture_serial.py --port COM5 --output data/detections/session.cs
 
 Change `COM5` to the XIAO serial port.
 
+## USB Debug / Testing Mode
+
+Debug mode is USB-only. It turns on automatically when a computer opens the XIAO USB serial port and turns off when that serial connection closes. There is no Wi-Fi command, UDP receiver, web route, or remote toggle that can enable it.
+
+The `USB Debug` tab in the Panel dashboard reads the USB serial rows live and shows:
+
+- latest bounding boxes in image coordinates
+- bbox bottom-center ground contact points
+- calibrated ground contact points and live tracks when `outputs/calibration.json` exists
+- PedPy-backed live summary, speed, dwell, and grid-density outputs as soon as enough calibrated points exist
+
+Start the dashboard:
+
+```powershell
+.\.venv\Scripts\python.exe -m panel serve pedflow/gui.py --show --autoreload
+```
+
+Open the `USB Debug` tab, enter the XIAO serial port such as `COM5`, and click `Start USB debug`.
+
+You can also run only the debug dashboard:
+
+```powershell
+.\.venv\Scripts\python.exe -m panel serve pedflow/debug_gui.py --show
+```
+
 ## Setup
 
 Install and prepare the project:
@@ -79,10 +105,11 @@ Start the local Panel dashboard:
 
 ## Panel Dashboard
 
-The dashboard is the supported workflow. It has two top-level tabs:
+The dashboard is the supported workflow. It has three top-level tabs:
 
-- `Analysis`: choose or upload the anonymous detections CSV and calibration JSON, tune tracking and PedPy metric settings, view HoloViews/hvPlot paths and heatmaps, inspect Tabulator tables, and optionally write processed CSV outputs to `outputs/analysis/`.
-- `Calibration`: generate the printable ChArUco board, calibrate camera intrinsics from manually captured ChArUco images, and combine intrinsics with `data/ground_markers.csv` into `outputs/calibration.json`.
+- `Analysis`: pick discovered detection sessions and calibration files from dropdowns, upload files only when needed, tune advanced settings, view paths and heatmaps, inspect tables, and optionally write processed CSV outputs.
+- `Calibration`: generate the printable ChArUco board, calibrate camera intrinsics from discovered image folders, and combine intrinsics with `data/ground_markers.csv` into `outputs/calibration.json`.
+- `USB Debug`: pick a detected USB serial port, start local testing, and view live boxes, contact points, tracks, and PedPy outputs.
 
 Generate the printable ChArUco board from the command line if needed:
 

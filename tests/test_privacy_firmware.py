@@ -42,3 +42,15 @@ def test_field_firmware_sends_anonymous_rows_over_wifi_udp():
     assert "udp.beginPacket(WIFI_UDP_BROADCAST, WIFI_UDP_PORT)" in source
     assert "PedFlowSensor" in source
     assert "4210" in source
+
+
+def test_debug_mode_is_usb_only_and_not_wifi_controlled():
+    source = SKETCH.read_text(encoding="utf-8")
+    lower_source = source.lower()
+
+    assert "isUsbDebugActive" in source
+    assert "static_cast<bool>(Serial)" in source
+    assert "#status,usb_debug_on" in source
+    assert "parsepacket" not in lower_source
+    assert "udp.read" not in lower_source
+    assert "udp.parsepacket" not in lower_source

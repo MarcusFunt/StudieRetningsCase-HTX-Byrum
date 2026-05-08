@@ -16,7 +16,7 @@ def test_panel_gui_builds_expected_analysis_and_calibration_tabs():
 
     assert app.title == "Pedestrian Flow Logger"
     assert isinstance(top_tabs, pn.Tabs)
-    assert top_tabs._names == ["Analysis", "Calibration"]
+    assert top_tabs._names == ["Analysis", "Calibration", "USB Debug"]
     assert isinstance(calibration_tabs, pn.Tabs)
     assert calibration_tabs._names == [
         "ChArUco Board",
@@ -24,3 +24,20 @@ def test_panel_gui_builds_expected_analysis_and_calibration_tabs():
         "Ground Homography",
     ]
     assert "".join(("Jup", "yter")) not in top_tabs._names
+
+
+def test_primary_workflow_controls_are_selectors_instead_of_path_text_inputs():
+    pn = pytest.importorskip("panel")
+
+    from pedflow.debug_panel import UsbDebugPanel
+    from pedflow.gui import AnalysisPanel, CalibrationPanel
+
+    analysis = AnalysisPanel(Path.cwd())
+    calibration = CalibrationPanel(Path.cwd())
+    debug = UsbDebugPanel(Path.cwd())
+
+    assert isinstance(analysis.detections_path, pn.widgets.Select)
+    assert isinstance(analysis.calibration_path, pn.widgets.Select)
+    assert isinstance(calibration.image_dir, pn.widgets.Select)
+    assert isinstance(calibration.intrinsics_path, pn.widgets.Select)
+    assert isinstance(debug.port, pn.widgets.Select)

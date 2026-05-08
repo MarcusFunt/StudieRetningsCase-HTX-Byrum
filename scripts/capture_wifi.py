@@ -8,7 +8,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from scripts.capture_serial import CSV_COLUMNS, _metadata_path_for, parse_serial_csv_line, validate_csv_row
+from pedflow.serial_protocol import CSV_COLUMNS, metadata_path_for as _metadata_path_for
+from pedflow.serial_protocol import parse_serial_csv_line, validate_csv_row
 
 
 DEFAULT_BIND_HOST = "0.0.0.0"
