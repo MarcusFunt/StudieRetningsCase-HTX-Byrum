@@ -33,7 +33,9 @@ try:
         file_options,
         keep_or_first,
         resolve_path,
+        serial_port_options,
     )
+    from .usb_calibration_capture import capture_usb_calibration_photos
 except ImportError:
     from pedflow.analysis import (
         FlowAnalysisResult,
@@ -56,7 +58,9 @@ except ImportError:
         file_options,
         keep_or_first,
         resolve_path,
+        serial_port_options,
     )
+    from pedflow.usb_calibration_capture import capture_usb_calibration_photos
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -888,6 +892,7 @@ class CalibrationPanel:
         intrinsics_options = self._intrinsics_options()
         marker_options = self._marker_options()
         calibration_output_options = self._calibration_output_options()
+        port_options = serial_port_options()
 
         self.board_output_dir = pn.widgets.Select(
             name="Output folder",
@@ -930,11 +935,37 @@ class CalibrationPanel:
             value=keep_or_first("outputs/calibration_intrinsics.json", intrinsics_options),
         )
         self.min_corners = pn.widgets.IntInput(name="Min corners per image", value=8, start=4)
+        self.capture_port = pn.widgets.Select(
+            name="USB serial port",
+            options=port_options,
+            value=keep_or_first("COM5", port_options),
+        )
+        self.capture_baud = pn.widgets.IntInput(name="Baud", value=115200, start=9600)
+        self.capture_basename = pn.widgets.TextInput(name="Photo basename", value="charuco_usb")
+        self.capture_count = pn.widgets.IntInput(name="Photos", value=1, start=1)
+        self.capture_interval_s = pn.widgets.FloatInput(name="Interval (s)", value=1.0, start=0.0)
+        self.capture_timeout_s = pn.widgets.FloatInput(name="Timeout (s)", value=30.0, start=1.0)
+        self.capture_settle_delay_s = pn.widgets.FloatInput(
+            name="USB settle delay (s)",
+            value=2.0,
+            start=0.0,
+        )
+        self.capture_usb_photo_button = pn.widgets.Button(
+            name="Take USB calibration photo",
+            button_type="primary",
+            height=42,
+        )
         self.refresh_intrinsics_files_button = pn.widgets.Button(name="Refresh files", height=38)
         self.calibrate_intrinsics_button = pn.widgets.Button(
             name="Calibrate intrinsics",
             button_type="primary",
             height=42,
+        )
+        self.capture_status = pn.pane.HTML(
+            _status_html(
+                "USB only",
+                "Photos are requested from the local USB serial port and saved to the selected image folder.",
+            )
         )
         self.intrinsics_status = pn.pane.HTML(
             _status_html("Ready", "Place calibration images in the selected folder.")
@@ -970,6 +1001,7 @@ class CalibrationPanel:
         self.refresh_intrinsics_files_button.on_click(self._on_refresh_calibration_files)
         self.refresh_homography_files_button.on_click(self._on_refresh_calibration_files)
         self.generate_board_button.on_click(self._on_generate_board)
+        self.capture_usb_photo_button.on_click(self._on_capture_usb_photo)
         self.calibrate_intrinsics_button.on_click(self._on_calibrate_intrinsics)
         self.compute_homography_button.on_click(self._on_compute_homography)
 
@@ -1030,8 +1062,21 @@ class CalibrationPanel:
                     self.calibrate_intrinsics_button,
                     css_classes=["pedflow-controls"],
                 ),
+                pn.Column(
+                    _section_title("USB photo capture", "Calibration"),
+                    self.capture_port,
+                    self.capture_baud,
+                    self.capture_basename,
+                    self.capture_count,
+                    self.capture_interval_s,
+                    self.capture_timeout_s,
+                    self.capture_settle_delay_s,
+                    self.capture_usb_photo_button,
+                    css_classes=["pedflow-controls"],
+                ),
                 css_classes=["pedflow-layout"],
             ),
+            self.capture_status,
             self.intrinsics_status,
         )
 
@@ -1098,6 +1143,7 @@ class CalibrationPanel:
         intrinsics_options = self._intrinsics_options()
         marker_options = self._marker_options()
         calibration_output_options = self._calibration_output_options()
+        port_options = serial_port_options()
 
         self.board_output_dir.options = board_output_options
         self.board_output_dir.value = keep_or_first(str(self.board_output_dir.value), board_output_options)
@@ -1108,6 +1154,8 @@ class CalibrationPanel:
         )
         self.image_dir.options = image_dir_options
         self.image_dir.value = keep_or_first(str(self.image_dir.value), image_dir_options)
+        self.capture_port.options = port_options
+        self.capture_port.value = keep_or_first(str(self.capture_port.value), port_options)
         self.intrinsics_output_path.options = intrinsics_options
         self.intrinsics_output_path.value = keep_or_first(
             str(self.intrinsics_output_path.value),
@@ -1163,6 +1211,45 @@ class CalibrationPanel:
         else:
             preview = _preview_empty("Board preview appears after generation.")
         self.board_preview[:] = [preview]
+
+    def _on_capture_usb_photo(self, _event: object) -> None:
+        self.capture_usb_photo_button.loading = True
+        self.capture_status.object = _status_html(
+            "Running",
+            f"Requesting photo capture over USB serial on {self.capture_port.value}.",
+        )
+
+        try:
+            output_dir = _resolve_path(self.project_root, self.image_dir.value)
+            captures = capture_usb_calibration_photos(
+                port=str(self.capture_port.value),
+                baud=int(self.capture_baud.value),
+                output_dir=output_dir,
+                basename=str(self.capture_basename.value),
+                count=int(self.capture_count.value),
+                interval_s=float(self.capture_interval_s.value),
+                settle_delay_s=float(self.capture_settle_delay_s.value),
+                timeout_s=float(self.capture_timeout_s.value),
+            )
+            saved_names = ", ".join(
+                _display_path(self.project_root, capture.image_path) for capture in captures[:3]
+            )
+            if len(captures) > 3:
+                saved_names = f"{saved_names}, ..."
+            self._on_refresh_calibration_files(_event)
+            self.capture_status.object = _status_html(
+                "Complete",
+                f"Saved {len(captures)} USB calibration photo(s): {saved_names}.",
+                kind="success",
+            )
+        except Exception as exc:
+            self.capture_status.object = _status_html(
+                "USB photo capture failed",
+                str(exc),
+                kind="danger",
+            )
+        finally:
+            self.capture_usb_photo_button.loading = False
 
     def _on_calibrate_intrinsics(self, _event: object) -> None:
         self.calibrate_intrinsics_button.loading = True

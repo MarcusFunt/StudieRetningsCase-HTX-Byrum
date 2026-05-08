@@ -3,6 +3,9 @@
 #include <WiFiUdp.h>
 
 #include <stdio.h>
+#include <string.h>
+
+#include "pedflow_secrets.h"
 
 namespace {
 constexpr unsigned long SERIAL_BAUD = 115200;
@@ -11,10 +14,12 @@ constexpr unsigned long ERROR_LOG_INTERVAL_MS = 5000;
 constexpr uint16_t WIFI_UDP_PORT = 4210;
 constexpr size_t STATUS_BUFFER_SIZE = 80;
 constexpr size_t CSV_ROW_BUFFER_SIZE = 160;
-constexpr const char WIFI_AP_SSID[] = "PedFlowSensor";
-constexpr const char WIFI_AP_PASSWORD[] = "pedflow1234";
+constexpr size_t USB_COMMAND_BUFFER_SIZE = 48;
 constexpr const char CSV_HEADER[] =
     "timestamp_ms,frame_id,detection_id,bbox_x,bbox_y,bbox_w,bbox_h,confidence,target";
+constexpr const char USB_CALIBRATION_CAPTURE_COMMAND[] = "CALIB_CAPTURE";
+constexpr const char CALIBRATION_IMAGE_BEGIN_PREFIX[] = "#calibration_image_begin";
+constexpr const char CALIBRATION_IMAGE_END[] = "#calibration_image_end";
 
 SSCMA AI;
 WiFiUDP udp;
@@ -82,6 +87,17 @@ void printStatus(const char *level, const char *code)
   emitTelemetryLine(line);
 }
 
+void printUsbOnlyStatus(const char *level, const char *code)
+{
+  if (!usbDebugActive) {
+    return;
+  }
+
+  char line[STATUS_BUFFER_SIZE];
+  snprintf(line, sizeof(line), "#%s,%s", level, code);
+  Serial.println(line);
+}
+
 void startWifiAccessPoint()
 {
   WiFi.mode(WIFI_AP);
@@ -91,7 +107,7 @@ void startWifiAccessPoint()
     return;
   }
 
-  if (!WiFi.softAP(WIFI_AP_SSID, WIFI_AP_PASSWORD)) {
+  if (!WiFi.softAP(PEDFLOW_WIFI_AP_SSID, PEDFLOW_WIFI_AP_PASSWORD)) {
     printStatus("error", "wifi_ap_start_failed");
     return;
   }
@@ -176,6 +192,89 @@ void logDetections()
     printCsvRow(now, currentFrameId, static_cast<uint16_t>(i), AI.boxes()[i]);
   }
 }
+
+void captureCalibrationImageUsbOnly()
+{
+  if (!usbDebugActive) {
+    return;
+  }
+
+  if (!aiReady) {
+    printUsbOnlyStatus("error", "calibration_capture_ai_not_ready");
+    return;
+  }
+
+  printUsbOnlyStatus("status", "calibration_capture_started");
+
+  const int invokeResult = AI.invoke(1, false, true);
+  if (invokeResult != 0) {
+    char line[STATUS_BUFFER_SIZE];
+    snprintf(line, sizeof(line), "#error,calibration_capture_failed,%d", invokeResult);
+    Serial.println(line);
+    return;
+  }
+
+  const String image = AI.last_image();
+  if (image.length() == 0) {
+    printUsbOnlyStatus("error", "calibration_capture_empty_image");
+    return;
+  }
+
+  char beginLine[STATUS_BUFFER_SIZE];
+  snprintf(
+      beginLine,
+      sizeof(beginLine),
+      "%s,%lu",
+      CALIBRATION_IMAGE_BEGIN_PREFIX,
+      static_cast<unsigned long>(image.length()));
+  Serial.println(beginLine);
+  Serial.println(image);
+  Serial.println(CALIBRATION_IMAGE_END);
+}
+
+void handleUsbCommand(const char *command)
+{
+  if (strcmp(command, USB_CALIBRATION_CAPTURE_COMMAND) == 0) {
+    captureCalibrationImageUsbOnly();
+    return;
+  }
+
+  printUsbOnlyStatus("error", "unknown_usb_command");
+}
+
+void handleUsbSerialCommands()
+{
+  if (!usbDebugActive) {
+    return;
+  }
+
+  static char commandBuffer[USB_COMMAND_BUFFER_SIZE];
+  static size_t commandLength = 0;
+
+  while (Serial.available() > 0) {
+    const char ch = static_cast<char>(Serial.read());
+    if (ch == '\r') {
+      continue;
+    }
+
+    if (ch == '\n') {
+      commandBuffer[commandLength] = '\0';
+      if (commandLength > 0) {
+        handleUsbCommand(commandBuffer);
+      }
+      commandLength = 0;
+      continue;
+    }
+
+    if (commandLength + 1 >= sizeof(commandBuffer)) {
+      commandLength = 0;
+      printUsbOnlyStatus("error", "usb_command_too_long");
+      continue;
+    }
+
+    commandBuffer[commandLength++] = ch;
+  }
+}
 }  // namespace
 
 void setup()
@@ -196,5 +295,6 @@ void setup()
 void loop()
 {
   updateUsbDebugMode();
+  handleUsbSerialCommands();
   logDetections();
 }

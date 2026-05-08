@@ -9,23 +9,43 @@ During normal data collection the firmware:
 - starts a local WPA2 Wi-Fi access point only for anonymous CSV telemetry
 - does not serve a web page or live box endpoint
 - does not stream camera frames or detection previews
-- does not call image/JPEG capture APIs
+- does not call image/JPEG capture APIs during normal data collection
 - sends only anonymous detection rows over Wi-Fi UDP and USB serial
 - enables local debug/testing output only when a USB serial connection is open
+- allows one-shot calibration photos only from a local USB serial GUI command
 
-Calibration images are separate manual inputs for OpenCV geometry calibration. They should be captured manually, avoid pedestrians, and be deleted after the calibration JSON is verified. The physical button must not be used to trigger automatic calibration capture.
+Calibration images are separate inputs for OpenCV geometry calibration. The Panel dashboard can request actual JPEG calibration photos over USB serial only; images are never served over Wi-Fi or included in UDP telemetry. Calibration photos should avoid pedestrians and be deleted after the calibration JSON is verified. The physical button must not be used to trigger automatic calibration capture.
 
-The default sensor Wi-Fi password is meant for classroom setup, not field deployment. Change `WIFI_AP_PASSWORD` in `GroveAIV2_Box_AP/GroveAIV2_Box_AP.ino` before collecting real data.
+Sensor Wi-Fi credentials are generated locally and ignored by git. Run setup, or run `python scripts/generate_secrets.py`, before flashing firmware so the device header and laptop credential files are created from the same local password.
 
 ## Firmware
 
 The sketch in `GroveAIV2_Box_AP/GroveAIV2_Box_AP.ino` starts a direct sensor Wi-Fi network and broadcasts CSV rows to the connected computer:
 
 ```text
-SSID: PedFlowSensor
-Password: pedflow1234
+SSID: see secrets/pedflow_wifi.txt
+Password: see secrets/pedflow_wifi.txt
 Sensor IP: 192.168.4.1
 UDP broadcast: 192.168.4.255:4210
+```
+
+The generated secret files share one local source of truth:
+
+- `secrets/pedflow_wifi.json`: local source credentials
+- `GroveAIV2_Box_AP/pedflow_secrets.h`: Arduino header included by the sketch
+- `secrets/pedflow_wifi.txt`: laptop-readable SSID and password
+- `secrets/PedFlowSensor-wifi-profile.xml`: Windows Wi-Fi profile for the laptop when using the default SSID
+
+All of these files are untracked. Rotate the local password with:
+
+```powershell
+python scripts/generate_secrets.py --rotate
+```
+
+After rotating, flash the firmware again so the device uses the new generated header. On Windows, you can install the generated laptop Wi-Fi profile with the path printed by the generator. For the default SSID:
+
+```powershell
+netsh wlan add profile filename="secrets\PedFlowSensor-wifi-profile.xml" user=current
 ```
 
 It also prints the same CSV rows over USB serial at 115200 baud:
@@ -39,7 +59,7 @@ The Seeed SSCMA library reports boxes as center `x,y,w,h`. The sketch converts t
 Capture a session from a PC over Wi-Fi:
 
 1. Flash `GroveAIV2_Box_AP/GroveAIV2_Box_AP.ino` to the XIAO ESP32-C6.
-2. Connect the computer Wi-Fi to `PedFlowSensor` using password `pedflow1234`.
+2. Connect the computer Wi-Fi using the generated SSID and password in `secrets/pedflow_wifi.txt`.
 3. Start the UDP capture script:
 
 ```powershell
@@ -55,6 +75,15 @@ python scripts/capture_serial.py --port COM5 --output data/detections/session.cs
 ```
 
 Change `COM5` to the XIAO serial port.
+
+Calibration photos are taken from the GUI only over USB serial:
+
+1. Flash `GroveAIV2_Box_AP/GroveAIV2_Box_AP.ino` to the XIAO ESP32-C6.
+2. Start the Panel dashboard and open `Calibration` -> `Camera Intrinsics`.
+3. Select the ChArUco image folder and USB serial port.
+4. Click `Take USB calibration photo`.
+
+Stop `USB Debug` or any serial capture script before taking calibration photos, because only one process can own the serial port at a time.
 
 ## USB Debug / Testing Mode
 
@@ -89,7 +118,7 @@ Install and prepare the project:
 powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
 
-The setup script creates `.venv`, installs Python dependencies, prepares local data/output folders, copies `data/ground_markers_template.csv` to `data/ground_markers.csv` if needed, generates the printable ChArUco board, and runs the tests.
+The setup script creates `.venv`, installs Python dependencies, generates local untracked Wi-Fi secrets, prepares local data/output folders, copies `data/ground_markers_template.csv` to `data/ground_markers.csv` if needed, generates the printable ChArUco board, and runs the tests.
 
 Manual dependency install:
 
@@ -108,7 +137,7 @@ Start the local Panel dashboard:
 The dashboard is the supported workflow. It has three top-level tabs:
 
 - `Analysis`: pick discovered detection sessions and calibration files from dropdowns, upload files only when needed, tune advanced settings, view paths and heatmaps, inspect tables, and optionally write processed CSV outputs.
-- `Calibration`: generate the printable ChArUco board, calibrate camera intrinsics from discovered image folders, and combine intrinsics with `data/ground_markers.csv` into `outputs/calibration.json`.
+- `Calibration`: generate the printable ChArUco board, take USB-only calibration photos, calibrate camera intrinsics from discovered image folders, and combine intrinsics with `data/ground_markers.csv` into `outputs/calibration.json`.
 - `USB Debug`: pick a detected USB serial port, start local testing, and view live boxes, contact points, tracks, and PedPy outputs.
 
 Generate the printable ChArUco board from the command line if needed:

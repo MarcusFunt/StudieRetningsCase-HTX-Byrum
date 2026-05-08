@@ -2,12 +2,14 @@ __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
 .venv/
+secrets/
 
 data/ground_markers.csv
 data/detections/*.csv
 data/calibration_images/**/*.jpg
 data/calibration_images/**/*.jpeg
 data/calibration_images/**/*.png
+GroveAIV2_Box_AP/pedflow_secrets.h
 outputs/**/*.json
 outputs/**/*.csv
 outputs/**/*.png

@@ -39,5 +39,7 @@ def test_primary_workflow_controls_are_selectors_instead_of_path_text_inputs():
     assert isinstance(analysis.detections_path, pn.widgets.Select)
     assert isinstance(analysis.calibration_path, pn.widgets.Select)
     assert isinstance(calibration.image_dir, pn.widgets.Select)
+    assert isinstance(calibration.capture_port, pn.widgets.Select)
+    assert isinstance(calibration.capture_usb_photo_button, pn.widgets.Button)
     assert isinstance(calibration.intrinsics_path, pn.widgets.Select)
     assert isinstance(debug.port, pn.widgets.Select)

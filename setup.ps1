@@ -3,6 +3,9 @@
 param(
     [string]$Python = "python",
     [string]$VenvPath = ".venv",
+    [string]$WifiSsid = "",
+    [string]$WifiPassword = "",
+    [switch]$RotateSecrets,
     [switch]$ForceGroundMarkers,
     [switch]$SkipBoard,
     [switch]$SkipTests
@@ -67,6 +70,19 @@ Write-Step "Installing Python dependencies"
 Invoke-Checked $VenvPython @("-m", "pip", "install", "--upgrade", "pip")
 Invoke-Checked $VenvPython @("-m", "pip", "install", "-r", $RequirementsPath)
 
+Write-Step "Preparing local Wi-Fi secrets"
+$SecretArgs = @("scripts\generate_secrets.py")
+if ($WifiSsid) {
+    $SecretArgs += @("--ssid", $WifiSsid)
+}
+if ($WifiPassword) {
+    $SecretArgs += @("--password", $WifiPassword)
+}
+if ($RotateSecrets) {
+    $SecretArgs += "--rotate"
+}
+Invoke-Checked $VenvPython $SecretArgs
+
 Write-Step "Preparing local data and output folders"
 $Folders = @(
     "data\detections",
@@ -106,4 +122,5 @@ $DisplayPythonPath = Join-Path $DisplayVenvPath "Scripts\python.exe"
 Write-Host "Activate the environment: $DisplayActivatePath"
 Write-Host "Start GUI dashboard:    $DisplayPythonPath -m panel serve pedflow/gui.py --show --autoreload"
 Write-Host "Capture serial CSV:     $DisplayPythonPath scripts\capture_serial.py --port COM5 --output data\detections\session.csv"
+Write-Host "Wi-Fi credentials:      secrets\pedflow_wifi.txt"
 Write-Host "Firmware sketch:        GroveAIV2_Box_AP\GroveAIV2_Box_AP.ino"
