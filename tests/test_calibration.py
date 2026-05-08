@@ -3,7 +3,9 @@ import numpy as np
 import pytest
 
 from pedflow.calibration import (
+    _MAX_SAFE_BASENAME_LENGTH,
     _reprojection_rms_error,
+    _safe_output_basename,
     calibrate_camera_from_checkerboard,
     generate_charuco_board,
     read_marker_csv,
@@ -72,6 +74,17 @@ def test_reprojection_error_reports_rms_pixel_error():
 def test_generate_charuco_board_rejects_path_like_basename(tmp_path, basename):
     with pytest.raises(ValueError, match="basename"):
         generate_charuco_board(tmp_path, basename=basename)
+
+
+def test_charuco_board_basename_is_deterministically_truncated():
+    basename = "charuco_" + ("a" * 200)
+
+    shortened = _safe_output_basename(basename)
+
+    assert len(shortened) == _MAX_SAFE_BASENAME_LENGTH
+    assert shortened == _safe_output_basename(basename)
+    assert shortened != _safe_output_basename(f"{basename}b")
+    assert shortened.startswith("charuco_")
 
 
 def test_marker_csv_rejects_non_finite_values(tmp_path):

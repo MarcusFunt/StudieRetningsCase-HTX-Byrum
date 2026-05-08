@@ -1,6 +1,11 @@
 import numpy as np
 
-from pedflow.live_debug import analyze_live_debug_rows, build_bbox_overlay, parse_debug_serial_line
+from pedflow.live_debug import (
+    SerialDebugReader,
+    analyze_live_debug_rows,
+    build_bbox_overlay,
+    parse_debug_serial_line,
+)
 
 
 def test_debug_serial_parser_keeps_rows_and_ignores_control_lines():
@@ -17,6 +22,29 @@ def test_debug_serial_parser_keeps_rows_and_ignores_control_lines():
     assert parsed.row == ["100", "1", "0", "10.0", "20.0", "4", "8", "0.700", "0"]
 
     assert parse_debug_serial_line("bad,row").kind == "invalid"
+
+
+def test_serial_debug_reader_resets_row_state_on_header():
+    reader = SerialDebugReader(port="COM_TEST")
+    reader._handle_line("100,1,0,10.0,20.0,4,8,0.700,0")
+    reader._handle_line("bad,row")
+
+    before_header = reader.snapshot()
+    assert len(before_header.rows) == 1
+    assert before_header.rows_read == 1
+    assert before_header.skipped_rows == 1
+    assert before_header.error == "wrong column count"
+
+    reader._handle_line(
+        "timestamp_ms,frame_id,detection_id,bbox_x,bbox_y,bbox_w,bbox_h,confidence,target"
+    )
+
+    after_header = reader.snapshot()
+    assert after_header.rows == []
+    assert after_header.rows_read == 0
+    assert after_header.skipped_rows == 0
+    assert after_header.error is None
+    assert after_header.comments[-1] == "#status,csv_header_reset"
 
 
 def test_bbox_overlay_adds_ground_contact_foot_point_in_image_coordinates():

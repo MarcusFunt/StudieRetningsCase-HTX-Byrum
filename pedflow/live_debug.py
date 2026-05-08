@@ -173,6 +173,12 @@ def analyze_live_debug_rows(
 
 @dataclass
 class SerialDebugReader:
+    """Read firmware debug CSV rows from USB serial on a background thread.
+
+    Call ``start`` to open the port, ``snapshot`` from the UI thread to copy buffered state, and
+    ``stop`` before discarding the reader. A repeated CSV header is treated as a firmware stream reset.
+    """
+
     port: str
     baud: int = 115200
     max_rows: int = 2000
@@ -252,3 +258,9 @@ class SerialDebugReader:
             elif parsed.kind == "invalid":
                 self._skipped_rows += 1
                 self._error = parsed.error
+            elif parsed.kind == "header":
+                self._rows.clear()
+                self._rows_read = 0
+                self._skipped_rows = 0
+                self._error = None
+                self._comments.append("#status,csv_header_reset")

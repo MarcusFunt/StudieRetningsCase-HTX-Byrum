@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from scripts.generate_secrets import MAX_WIFI_PROFILE_STEM_LENGTH, paths_for, slugify_ssid
+
 SCRIPT = Path("scripts/generate_secrets.py")
 
 
@@ -73,3 +75,16 @@ def test_generated_secret_paths_are_gitignored():
 
     assert "secrets/" in ignored_lines
     assert "GroveAIV2_Box_AP/pedflow_secrets.h" in ignored_lines
+
+
+def test_windows_wifi_profile_stem_is_deterministically_truncated(tmp_path: Path):
+    ssid = "PedFlowSensor" * 20
+
+    slug = slugify_ssid(ssid)
+    profile_path = paths_for(tmp_path, ssid).windows_wifi_profile
+
+    assert len(slug) == MAX_WIFI_PROFILE_STEM_LENGTH
+    assert slug == slugify_ssid(ssid)
+    assert slug != slugify_ssid(f"{ssid}x")
+    assert profile_path.name == f"{slug}-wifi-profile.xml"
+    assert len(profile_path.name) < 255

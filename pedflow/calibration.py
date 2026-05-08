@@ -16,6 +16,8 @@ from .geometry import apply_homography, save_calibration, undistort_points
 DEFAULT_CHARUCO_DICTIONARY = "DICT_5X5_100"
 GROUND_MARKER_COLUMNS = ("image_x", "image_y", "ground_x_m", "ground_y_m")
 _SAFE_BASENAME = re.compile(r"^[A-Za-z0-9_.-]+$")
+_MAX_SAFE_BASENAME_LENGTH = 120
+_TRUNCATION_DIGEST_LENGTH = 10
 
 
 def get_aruco_dictionary(dictionary_name: str = DEFAULT_CHARUCO_DICTIONARY) -> cv2.aruco.Dictionary:
@@ -57,7 +59,17 @@ def _safe_output_basename(basename: str) -> str:
         raise ValueError("basename must be a filename stem, not a path")
     if not _SAFE_BASENAME.fullmatch(basename):
         raise ValueError("basename may only contain letters, numbers, dots, dashes, and underscores")
-    return basename
+    return _truncate_with_digest(basename, _MAX_SAFE_BASENAME_LENGTH)
+
+
+def _truncate_with_digest(value: str, max_length: int) -> str:
+    if len(value) <= max_length:
+        return value
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:_TRUNCATION_DIGEST_LENGTH]
+    prefix_length = max_length - len(digest) - 1
+    if prefix_length < 1:
+        raise ValueError("max_length is too short for deterministic truncation")
+    return f"{value[:prefix_length]}-{digest}"
 
 
 def charuco_board_from_metadata(metadata: dict) -> cv2.aruco.CharucoBoard:
@@ -81,6 +93,12 @@ def generate_charuco_board(
     margin_mm: float = 10.0,
     basename: str = "charuco_board",
 ) -> dict:
+    """Generate printable ChArUco board assets and metadata.
+
+    Length inputs are millimeters for user-facing print dimensions and stored as meters in metadata.
+    Print the PDF at 100% scale so board geometry matches calibration measurements.
+    """
+
     import matplotlib
 
     matplotlib.use("Agg")
@@ -205,6 +223,12 @@ def calibrate_camera_from_charuco(
     board_metadata_path: str | Path,
     min_corners: int = 8,
 ) -> dict:
+    """Estimate camera intrinsics and distortion from ChArUco board images.
+
+    All usable images must share one resolution. Board dimensions come from generated metadata and
+    are interpreted in meters; OpenCV estimates the camera matrix and lens distortion coefficients.
+    """
+
     with Path(board_metadata_path).open("r", encoding="utf-8") as file:
         board_metadata = json.load(file)
 
@@ -321,6 +345,12 @@ def calibrate_camera_from_checkerboard(
     pattern_size: tuple[int, int],
     square_size_m: float,
 ) -> dict:
+    """Estimate camera intrinsics and distortion from checkerboard images.
+
+    ``pattern_size`` is the inner-corner grid as ``(columns, rows)`` and ``square_size_m`` is in
+    meters. All usable images must have the same resolution for OpenCV calibration.
+    """
+
     object_template = checkerboard_object_points(pattern_size, square_size_m)
     object_points: list[np.ndarray] = []
     image_points: list[np.ndarray] = []
@@ -444,6 +474,12 @@ def compute_ground_homography(
     dist_coeffs: np.ndarray,
     ransac_threshold_m: float = 0.10,
 ) -> dict:
+    """Compute an image-to-ground homography from measured marker correspondences.
+
+    Image marker points are undistorted with the camera intrinsics before fitting. Ground marker
+    coordinates are meters on the walking plane, and the RANSAC threshold is also in meters.
+    """
+
     marker_points = _validate_marker_points(marker_points)
     image_points = marker_points[["image_x", "image_y"]].to_numpy(dtype=np.float64)
     ground_points = marker_points[["ground_x_m", "ground_y_m"]].to_numpy(dtype=np.float64)

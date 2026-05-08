@@ -238,6 +238,12 @@ def add_dwell_flags(
     stop_speed_threshold_m_s: float = 0.2,
     stop_duration_threshold_s: float = 2.0,
 ) -> pd.DataFrame:
+    """Mark consecutive slow samples as dwell points.
+
+    A point is slow when ``speed_m_s`` is below ``stop_speed_threshold_m_s``. A run of slow points is
+    marked as dwell only when its elapsed timestamp duration reaches ``stop_duration_threshold_s``.
+    """
+
     if "speed_m_s" not in tracks.columns:
         raise ValueError("tracks must contain speed_m_s; call estimate_speeds first")
 

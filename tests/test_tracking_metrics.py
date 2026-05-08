@@ -2,7 +2,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pedflow.metrics import add_dwell_flags, estimate_speeds, summarize_flow, track_summaries
+from pedflow.metrics import (
+    _timestamp_frame_lookup,
+    add_dwell_flags,
+    estimate_speeds,
+    summarize_flow,
+    track_summaries,
+)
 from pedflow.tracking import filter_short_tracks, link_detections
 
 
@@ -100,6 +106,15 @@ def test_jittery_timestamps_warn_before_pedpy_frame_mapping():
 
     with pytest.warns(RuntimeWarning, match="Timestamp intervals are jittery"):
         estimate_speeds(tracks, window_s=0.2)
+
+
+def test_timestamp_frame_lookup_rounds_floating_point_noise():
+    lookup = _timestamp_frame_lookup(pd.Series([0.0, 100.0, 199.999999, 300.0]))
+
+    assert lookup[0.0] == 0
+    assert lookup[100.0] == 1
+    assert lookup[199.999999] == 2
+    assert lookup[300.0] == 3
 
 
 def test_dwell_flags_and_summary_metrics():

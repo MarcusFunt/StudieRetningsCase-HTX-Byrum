@@ -1193,7 +1193,7 @@ class CalibrationPanel:
                 f"{_display_path(self.project_root, output_dir)}. "
                 f"Board size: {metadata['board_width_m']:.3f} m x {metadata['board_height_m']:.3f} m."
             )
-            self._refresh_board_preview(output_dir / f"{self.board_basename.value}.png")
+            self._refresh_board_preview(Path(str(metadata["png_path"])))
             self.board_status.object = _status_html("Complete", message, kind="success")
         except Exception as exc:
             self.board_status.object = _status_html("Board generation failed", str(exc), kind="danger")

@@ -1,9 +1,13 @@
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from pedflow.usb_calibration_capture import (
+    _MAX_SAFE_BASENAME_LENGTH,
     CALIBRATION_CAPTURE_COMMAND,
+    _safe_basename,
+    _unique_capture_path,
     decode_calibration_image_payload,
     metadata_path_for,
     request_calibration_image,
@@ -59,3 +63,22 @@ def test_usb_calibration_metadata_path_uses_json_sidecar():
     assert metadata_path_for(Path("data/calibration_images/charuco/photo.jpg")) == Path(
         "data/calibration_images/charuco/photo.metadata.json"
     )
+
+
+def test_usb_capture_basename_is_truncated_before_timestamp(tmp_path):
+    basename = "charuco_usb_" + ("b" * 200)
+
+    shortened = _safe_basename(basename)
+    image_path = _unique_capture_path(
+        tmp_path,
+        shortened,
+        index=1,
+        total_count=1,
+        captured_at=datetime(2026, 5, 8, 12, 0, tzinfo=UTC),
+    )
+
+    assert len(shortened) == _MAX_SAFE_BASENAME_LENGTH
+    assert shortened == _safe_basename(basename)
+    assert shortened != _safe_basename(f"{basename}b")
+    assert image_path.name.startswith(shortened)
+    assert len(image_path.name) < 255

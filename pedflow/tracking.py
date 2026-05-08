@@ -72,6 +72,12 @@ def link_detections(
     min_gate_m: float = 0.75,
     velocity_alpha: float = 0.5,
 ) -> pd.DataFrame:
+    """Assign ground-plane detections to pedestrian tracks.
+
+    Detections are processed by timestamp. Active tracks are predicted forward using their smoothed
+    velocity, then matched globally to current detections within a speed-derived distance gate.
+    """
+
     _required_ground_columns(detections)
     if not 0.0 <= smoothing_alpha <= 1.0:
         raise ValueError("smoothing_alpha must be between 0.0 and 1.0")

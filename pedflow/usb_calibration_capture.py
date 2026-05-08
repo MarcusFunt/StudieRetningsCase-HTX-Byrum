@@ -18,6 +18,8 @@ CAPTURE_ERROR_PREFIX = "#error,calibration_capture"
 DEFAULT_CAPTURE_TIMEOUT_S = 30.0
 
 _SAFE_BASENAME = re.compile(r"^[A-Za-z0-9_.-]+$")
+_MAX_SAFE_BASENAME_LENGTH = 120
+_TRUNCATION_DIGEST_LENGTH = 10
 
 
 class SerialLike(Protocol):
@@ -167,7 +169,17 @@ def _safe_basename(basename: str) -> str:
         raise ValueError("basename must be a filename stem, not a path")
     if not _SAFE_BASENAME.fullmatch(basename):
         raise ValueError("basename may only contain letters, numbers, dots, dashes, and underscores")
-    return basename
+    return _truncate_with_digest(basename, _MAX_SAFE_BASENAME_LENGTH)
+
+
+def _truncate_with_digest(value: str, max_length: int) -> str:
+    if len(value) <= max_length:
+        return value
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:_TRUNCATION_DIGEST_LENGTH]
+    prefix_length = max_length - len(digest) - 1
+    if prefix_length < 1:
+        raise ValueError("max_length is too short for deterministic truncation")
+    return f"{value[:prefix_length]}-{digest}"
 
 
 def _write_capture(
