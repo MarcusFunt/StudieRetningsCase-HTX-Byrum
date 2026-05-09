@@ -83,7 +83,8 @@ Calibration photos are taken from the GUI only over USB serial and are kept in s
 1. Flash `GroveAIV2_Box_AP/GroveAIV2_Box_AP.ino` to the XIAO ESP32-C6.
 2. Open `Calibration` -> `Camera Intrinsics` for ChArUco board photos in `data/calibration_images/charuco/`.
 3. Open `Calibration` -> `Ground Homography` for ground marker reference photos in `data/calibration_images/ground/`.
-4. Do not mix these folders; intrinsics photos calibrate lens geometry, while ground photos are only for measuring marker pixel positions.
+4. For automatic ground homography, place the ChArUco board flat on the walking plane, enter its board origin and rotation in ground coordinates, and click `Build from ChArUco photo`.
+5. Do not mix these folders; intrinsics photos calibrate lens geometry, while ground photos map image pixels to ground meters.
 
 Stop `USB Debug` or any serial capture script before taking calibration photos, because only one process can own the serial port at a time.
 
@@ -139,7 +140,7 @@ Start the local Panel dashboard:
 The dashboard is the supported workflow. It has four top-level tabs:
 
 - `Analysis`: pick discovered detection sessions and calibration files from dropdowns, upload files only when needed, tune advanced settings, view paths and heatmaps, inspect tables, and optionally write processed CSV outputs.
-- `Calibration`: generate the printable ChArUco board, capture intrinsics photos and ground marker photos into separate folders, calibrate camera intrinsics, and combine intrinsics with `data/ground_markers.csv` into `outputs/calibration.json`.
+- `Calibration`: generate the printable ChArUco board, capture intrinsics photos and ground marker photos into separate folders, calibrate camera intrinsics, and build ground homography either automatically from a flat ChArUco ground photo or from `data/ground_markers.csv`.
 - `USB Debug`: pick a detected USB serial port, start local testing, and view live boxes, contact points, tracks, and PedPy outputs.
 - `Operations`: run the repo scripts from the GUI, including Wi-Fi/USB CSV capture, USB-only calibration image capture, Wi-Fi secret generation, ChArUco board generation, and logged PedPy/OpenCV analysis runs.
 

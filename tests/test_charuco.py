@@ -3,8 +3,14 @@ import subprocess
 import sys
 
 import cv2
+import numpy as np
 
-from pedflow.calibration import charuco_board_from_metadata, detect_charuco_image_points
+from pedflow.calibration import (
+    _charuco_object_points_to_ground,
+    charuco_board_from_metadata,
+    compute_ground_homography_from_charuco,
+    detect_charuco_image_points,
+)
 
 
 def test_generate_charuco_board_script_writes_printable_board_and_metadata(tmp_path):
@@ -61,3 +67,73 @@ def test_generate_charuco_board_script_writes_printable_board_and_metadata(tmp_p
     assert len(object_points) == len(image_points)
     assert len(image_points) >= 4
     assert marker_count > 0
+
+
+def test_charuco_object_points_rotate_into_ground_coordinates():
+    object_points = np.array(
+        [
+            [[0.0, 0.0, 0.0]],
+            [[1.0, 0.0, 0.0]],
+            [[0.0, 1.0, 0.0]],
+            [[1.0, 1.0, 0.0]],
+        ],
+        dtype=np.float64,
+    )
+
+    ground = _charuco_object_points_to_ground(
+        object_points,
+        board_origin_x_m=10.0,
+        board_origin_y_m=20.0,
+        board_rotation_deg=90.0,
+    )
+
+    np.testing.assert_allclose(
+        ground,
+        [
+            [10.0, 20.0],
+            [10.0, 21.0],
+            [9.0, 20.0],
+            [9.0, 21.0],
+        ],
+        atol=1e-12,
+    )
+
+
+def test_ground_homography_can_be_built_from_flat_charuco_photo(tmp_path):
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/generate_charuco_board.py",
+            "--output-dir",
+            str(tmp_path),
+            "--squares-x",
+            "5",
+            "--squares-y",
+            "4",
+            "--square-length-mm",
+            "30",
+            "--marker-length-mm",
+            "22",
+            "--dpi",
+            "150",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    result = compute_ground_homography_from_charuco(
+        image_path=tmp_path / "charuco_board.png",
+        board_metadata_path=tmp_path / "charuco_board.json",
+        camera_matrix=np.eye(3),
+        dist_coeffs=np.zeros(5),
+        board_origin_x_m=1.0,
+        board_origin_y_m=2.0,
+        board_rotation_deg=15.0,
+        min_corners=4,
+    )
+
+    assert result["ground_homography_source"] == "charuco_board"
+    assert result["ground_charuco_detected_corner_count"] >= 4
+    assert result["ground_marker_count"] == result["ground_charuco_detected_corner_count"]
+    assert result["ground_marker_max_residual_m"] < 1e-4

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -248,12 +249,6 @@ def calibrate_camera_from_charuco(
             skipped_images.append({"path": str(path), "reason": "unreadable"})
             continue
 
-        current_image_size = (int(image.shape[1]), int(image.shape[0]))
-        if image_size is None:
-            image_size = current_image_size
-        elif image_size != current_image_size:
-            raise ValueError("All ChArUco calibration images must have the same resolution")
-
         try:
             obj_points, img_points, marker_count = detect_charuco_image_points(
                 image,
@@ -264,6 +259,12 @@ def calibrate_camera_from_charuco(
             skipped_images.append({"path": str(path), "reason": str(exc)})
             continue
 
+        current_image_size = (int(image.shape[1]), int(image.shape[0]))
+        if image_size is None:
+            image_size = current_image_size
+        elif image_size != current_image_size:
+            raise ValueError("All usable ChArUco calibration images must have the same resolution")
+
         object_points.append(obj_points)
         image_points.append(img_points)
         used_images.append(str(path))
@@ -272,7 +273,7 @@ def calibrate_camera_from_charuco(
 
     if image_size is None:
         raise ValueError(
-            f"No ChArUco calibration images could be read; skipped {len(skipped_images)} images"
+            f"No usable ChArUco calibration images found; skipped {len(skipped_images)} images"
         )
     if len(object_points) < 3:
         raise ValueError(
@@ -372,16 +373,16 @@ def calibrate_camera_from_checkerboard(
             continue
 
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        current_image_size = (int(gray.shape[1]), int(gray.shape[0]))
-        if image_size is None:
-            image_size = current_image_size
-        elif image_size != current_image_size:
-            raise ValueError("All checkerboard calibration images must have the same resolution")
-
         found, corners = cv2.findChessboardCorners(gray, pattern_size)
         if not found:
             skipped_images.append({"path": str(path), "reason": "checkerboard_not_found"})
             continue
+
+        current_image_size = (int(gray.shape[1]), int(gray.shape[0]))
+        if image_size is None:
+            image_size = current_image_size
+        elif image_size != current_image_size:
+            raise ValueError("All usable checkerboard calibration images must have the same resolution")
 
         refined = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
         object_points.append(object_template.copy())
@@ -390,7 +391,7 @@ def calibrate_camera_from_checkerboard(
 
     if image_size is None:
         raise ValueError(
-            f"No checkerboard calibration images could be read; skipped {len(skipped_images)} images"
+            f"No usable checkerboard calibration images found; skipped {len(skipped_images)} images"
         )
     if len(object_points) < 3:
         raise ValueError(
@@ -468,6 +469,76 @@ def _validate_marker_point_set(points_frame: pd.DataFrame, label: str) -> None:
         raise ValueError(f"{label.capitalize()} marker points must not be collinear")
 
 
+def _charuco_object_points_to_ground(
+    object_points: np.ndarray,
+    board_origin_x_m: float = 0.0,
+    board_origin_y_m: float = 0.0,
+    board_rotation_deg: float = 0.0,
+) -> np.ndarray:
+    object_array = np.asarray(object_points, dtype=np.float64)
+    if object_array.ndim == 0 or object_array.size == 0 or object_array.shape[-1] < 2:
+        raise ValueError("ChArUco object points must contain at least x/y coordinates")
+
+    board_xy = object_array.reshape(-1, object_array.shape[-1])[:, :2]
+    angle_rad = math.radians(float(board_rotation_deg))
+    cos_angle = math.cos(angle_rad)
+    sin_angle = math.sin(angle_rad)
+    rotation = np.array(
+        [
+            [cos_angle, -sin_angle],
+            [sin_angle, cos_angle],
+        ],
+        dtype=np.float64,
+    )
+    origin = np.array([float(board_origin_x_m), float(board_origin_y_m)], dtype=np.float64)
+    return board_xy @ rotation.T + origin
+
+
+def detect_charuco_ground_markers(
+    image_path: str | Path,
+    board_metadata_path: str | Path,
+    board_origin_x_m: float = 0.0,
+    board_origin_y_m: float = 0.0,
+    board_rotation_deg: float = 0.0,
+    min_corners: int = 8,
+) -> tuple[pd.DataFrame, int]:
+    """Detect ChArUco corners in a ground-plane photo and convert them to marker rows.
+
+    The board must lie flat on the walking plane. ``board_origin_*`` is the ground coordinate
+    of the board's local origin, and ``board_rotation_deg`` rotates board-local x/y coordinates
+    counter-clockwise into the ground coordinate system.
+    """
+
+    with Path(board_metadata_path).open("r", encoding="utf-8") as file:
+        board_metadata = json.load(file)
+
+    image = cv2.imread(str(image_path))
+    if image is None:
+        raise FileNotFoundError(f"Could not read ChArUco ground image: {image_path}")
+
+    object_points, image_points, marker_count = detect_charuco_image_points(
+        image,
+        charuco_board_from_metadata(board_metadata),
+        min_corners=min_corners,
+    )
+    image_xy = np.asarray(image_points, dtype=np.float64).reshape(-1, 2)
+    ground_xy = _charuco_object_points_to_ground(
+        object_points,
+        board_origin_x_m=board_origin_x_m,
+        board_origin_y_m=board_origin_y_m,
+        board_rotation_deg=board_rotation_deg,
+    )
+    marker_points = pd.DataFrame(
+        {
+            "image_x": image_xy[:, 0],
+            "image_y": image_xy[:, 1],
+            "ground_x_m": ground_xy[:, 0],
+            "ground_y_m": ground_xy[:, 1],
+        }
+    )
+    return _validate_marker_points(marker_points), marker_count
+
+
 def compute_ground_homography(
     marker_points: pd.DataFrame,
     camera_matrix: np.ndarray,
@@ -512,6 +583,50 @@ def compute_ground_homography(
         "ground_marker_mean_residual_m": float(np.mean(residuals)),
         "ground_marker_max_residual_m": float(np.max(residuals)),
     }
+
+
+def compute_ground_homography_from_charuco(
+    image_path: str | Path,
+    board_metadata_path: str | Path,
+    camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
+    board_origin_x_m: float = 0.0,
+    board_origin_y_m: float = 0.0,
+    board_rotation_deg: float = 0.0,
+    min_corners: int = 8,
+    ransac_threshold_m: float = 0.10,
+) -> dict:
+    """Compute image-to-ground homography from a flat ChArUco board ground photo."""
+
+    marker_points, marker_count = detect_charuco_ground_markers(
+        image_path=image_path,
+        board_metadata_path=board_metadata_path,
+        board_origin_x_m=board_origin_x_m,
+        board_origin_y_m=board_origin_y_m,
+        board_rotation_deg=board_rotation_deg,
+        min_corners=min_corners,
+    )
+    homography = compute_ground_homography(
+        marker_points=marker_points,
+        camera_matrix=camera_matrix,
+        dist_coeffs=dist_coeffs,
+        ransac_threshold_m=ransac_threshold_m,
+    )
+    homography.update(
+        {
+            "ground_homography_source": "charuco_board",
+            "ground_charuco_image_path": str(image_path),
+            "ground_charuco_board_metadata_path": str(board_metadata_path),
+            "ground_charuco_detected_corner_count": len(marker_points),
+            "ground_charuco_detected_marker_count": int(marker_count),
+            "ground_charuco_board_origin_m": [
+                float(board_origin_x_m),
+                float(board_origin_y_m),
+            ],
+            "ground_charuco_board_rotation_deg": float(board_rotation_deg),
+        }
+    )
+    return homography
 
 
 def merge_and_save_calibration(

@@ -21,6 +21,7 @@ try:
     from .calibration import (
         calibrate_camera_from_charuco,
         compute_ground_homography,
+        compute_ground_homography_from_charuco,
         generate_charuco_board,
         merge_and_save_calibration,
         read_marker_csv,
@@ -47,6 +48,7 @@ except ImportError:
     from pedflow.calibration import (
         calibrate_camera_from_charuco,
         compute_ground_homography,
+        compute_ground_homography_from_charuco,
         generate_charuco_board,
         merge_and_save_calibration,
         read_marker_csv,
@@ -931,6 +933,7 @@ class CalibrationPanel:
         board_metadata_options = self._board_metadata_options()
         intrinsics_image_dir_options = self._intrinsics_image_dir_options()
         ground_image_dir_options = self._ground_image_dir_options()
+        ground_charuco_image_options = self._ground_charuco_image_options()
         intrinsics_options = self._intrinsics_options()
         marker_options = self._marker_options()
         calibration_output_options = self._calibration_output_options()
@@ -972,9 +975,9 @@ class CalibrationPanel:
         self.homography_workflow = _workflow_note(
             "Ground homography",
             (
-                f"Save ground marker reference photos in {GROUND_IMAGE_DIR}.",
-                "Fill the marker CSV with pixel positions from those ground photos.",
-                "Build the final calibration from the intrinsics JSON plus marker CSV.",
+                f"Place a ChArUco board flat on the ground and save that photo in {GROUND_IMAGE_DIR}.",
+                "Enter the board origin and rotation in ground coordinates.",
+                "Build from ChArUco automatically, or use the marker CSV fallback.",
             ),
         )
 
@@ -1044,7 +1047,7 @@ class CalibrationPanel:
         self.ground_capture_baud = pn.widgets.IntInput(name="Baud", value=115200, start=9600)
         self.ground_capture_basename = pn.widgets.TextInput(
             name="Photo basename",
-            value="ground_markers_usb",
+            value="ground_charuco_usb",
         )
         self.ground_capture_count = pn.widgets.IntInput(name="Photos", value=1, start=1)
         self.ground_capture_interval_s = pn.widgets.FloatInput(
@@ -1070,7 +1073,50 @@ class CalibrationPanel:
         self.ground_capture_status = pn.pane.HTML(
             _status_html(
                 "USB only",
-                "Ground marker photos are saved separately for filling the marker CSV.",
+                "Ground ChArUco/reference photos are saved separately for homography.",
+            )
+        )
+
+        self.ground_charuco_image_path = pn.widgets.Select(
+            name="Ground ChArUco photo",
+            options=ground_charuco_image_options,
+            value=ground_charuco_image_options[0],
+        )
+        self.ground_board_metadata_path = pn.widgets.Select(
+            name="Board metadata JSON",
+            options=board_metadata_options,
+            value=keep_or_first("outputs/charuco_board/charuco_board.json", board_metadata_options),
+        )
+        self.ground_board_origin_x_m = pn.widgets.FloatInput(
+            name="Board origin x (m)",
+            value=0.0,
+        )
+        self.ground_board_origin_y_m = pn.widgets.FloatInput(
+            name="Board origin y (m)",
+            value=0.0,
+        )
+        self.ground_board_rotation_deg = pn.widgets.FloatInput(
+            name="Board rotation (deg)",
+            value=0.0,
+        )
+        self.ground_charuco_min_corners = pn.widgets.IntInput(
+            name="Min ChArUco corners",
+            value=8,
+            start=4,
+        )
+        self.charuco_ransac_threshold_m = pn.widgets.FloatInput(
+            name="RANSAC threshold (m)",
+            value=0.10,
+        )
+        self.compute_charuco_homography_button = pn.widgets.Button(
+            name="Build from ChArUco photo",
+            button_type="primary",
+            height=42,
+        )
+        self.charuco_homography_status = pn.pane.HTML(
+            _status_html(
+                "Ready",
+                "Use a flat ground ChArUco photo to build homography without manual clicking.",
             )
         )
 
@@ -1107,6 +1153,7 @@ class CalibrationPanel:
         self.capture_usb_photo_button.on_click(self._on_capture_usb_photo)
         self.ground_capture_usb_photo_button.on_click(self._on_capture_ground_photo)
         self.calibrate_intrinsics_button.on_click(self._on_calibrate_intrinsics)
+        self.compute_charuco_homography_button.on_click(self._on_compute_charuco_homography)
         self.compute_homography_button.on_click(self._on_compute_homography)
 
         self.board_preview = pn.Column(css_classes=["pedflow-preview"], sizing_mode="stretch_width")
@@ -1203,18 +1250,31 @@ class CalibrationPanel:
                     css_classes=["pedflow-controls"],
                 ),
                 pn.Column(
-                    _section_title("Step 2", "Marker mapping and output"),
+                    _section_title("Step 2", "Auto ChArUco homography"),
                     self.intrinsics_path,
-                    self.markers_csv,
                     self.calibration_output_path,
-                    self.ransac_threshold_m,
+                    self.ground_charuco_image_path,
+                    self.ground_board_metadata_path,
+                    self.ground_board_origin_x_m,
+                    self.ground_board_origin_y_m,
+                    self.ground_board_rotation_deg,
+                    self.ground_charuco_min_corners,
+                    self.charuco_ransac_threshold_m,
                     self.refresh_homography_files_button,
+                    self.compute_charuco_homography_button,
+                    css_classes=["pedflow-controls"],
+                ),
+                pn.Column(
+                    _section_title("Fallback", "Manual marker CSV"),
+                    self.markers_csv,
+                    self.ransac_threshold_m,
                     self.compute_homography_button,
                     css_classes=["pedflow-controls"],
                 ),
                 css_classes=["pedflow-layout"],
             ),
             self.ground_capture_status,
+            self.charuco_homography_status,
             self.homography_status,
         )
 
@@ -1249,6 +1309,17 @@ class CalibrationPanel:
             (INTRINSICS_IMAGE_DIR, GROUND_IMAGE_DIR),
         )
 
+    def _ground_charuco_image_options(self) -> list[str]:
+        return file_options(
+            self.project_root,
+            (
+                f"{GROUND_IMAGE_DIR}/*.jpg",
+                f"{GROUND_IMAGE_DIR}/*.jpeg",
+                f"{GROUND_IMAGE_DIR}/*.png",
+            ),
+            (f"{GROUND_IMAGE_DIR}/ground_charuco.jpg",),
+        )
+
     def _intrinsics_options(self) -> list[str]:
         return file_options(
             self.project_root,
@@ -1275,6 +1346,7 @@ class CalibrationPanel:
         board_metadata_options = self._board_metadata_options()
         intrinsics_image_dir_options = self._intrinsics_image_dir_options()
         ground_image_dir_options = self._ground_image_dir_options()
+        ground_charuco_image_options = self._ground_charuco_image_options()
         intrinsics_options = self._intrinsics_options()
         marker_options = self._marker_options()
         calibration_output_options = self._calibration_output_options()
@@ -1287,6 +1359,11 @@ class CalibrationPanel:
             str(self.board_metadata_path.value),
             board_metadata_options,
         )
+        self.ground_board_metadata_path.options = board_metadata_options
+        self.ground_board_metadata_path.value = keep_or_first(
+            str(self.ground_board_metadata_path.value),
+            board_metadata_options,
+        )
         self.intrinsics_image_dir.options = intrinsics_image_dir_options
         self.intrinsics_image_dir.value = keep_or_first(
             str(self.intrinsics_image_dir.value),
@@ -1297,6 +1374,16 @@ class CalibrationPanel:
             str(self.ground_image_dir.value),
             ground_image_dir_options,
         )
+        self.ground_charuco_image_path.options = ground_charuco_image_options
+        current_ground_photo = str(self.ground_charuco_image_path.value)
+        default_ground_photo = f"{GROUND_IMAGE_DIR}/ground_charuco.jpg"
+        if current_ground_photo == default_ground_photo and len(ground_charuco_image_options) > 1:
+            self.ground_charuco_image_path.value = ground_charuco_image_options[0]
+        else:
+            self.ground_charuco_image_path.value = keep_or_first(
+                current_ground_photo,
+                ground_charuco_image_options,
+            )
         self.capture_port.options = port_options
         self.capture_port.value = keep_or_first(str(self.capture_port.value), port_options)
         self.ground_capture_port.options = port_options
@@ -1434,6 +1521,11 @@ class CalibrationPanel:
             )
             saved_names = self._saved_capture_names(captures)
             self._on_refresh_calibration_files(_event)
+            if captures:
+                self.ground_charuco_image_path.value = _display_path(
+                    self.project_root,
+                    captures[-1].image_path,
+                )
             self.ground_capture_status.object = _status_html(
                 "Complete",
                 f"Saved {len(captures)} ground marker photo(s): {saved_names}.",
@@ -1487,6 +1579,49 @@ class CalibrationPanel:
             )
         finally:
             self.calibrate_intrinsics_button.loading = False
+
+    def _on_compute_charuco_homography(self, _event: object) -> None:
+        self.compute_charuco_homography_button.loading = True
+        self.charuco_homography_status.object = _status_html(
+            "Running",
+            "Detecting ChArUco corners and building ground calibration.",
+        )
+
+        try:
+            self._ensure_separate_image_folders()
+            intrinsics_path = _resolve_path(self.project_root, self.intrinsics_path.value)
+            image_path = _resolve_path(self.project_root, self.ground_charuco_image_path.value)
+            metadata_path = _resolve_path(self.project_root, self.ground_board_metadata_path.value)
+            output_path = _resolve_path(self.project_root, self.calibration_output_path.value)
+
+            intrinsics = load_calibration(intrinsics_path)
+            homography = compute_ground_homography_from_charuco(
+                image_path=image_path,
+                board_metadata_path=metadata_path,
+                camera_matrix=np.asarray(intrinsics["K"], dtype=np.float64),
+                dist_coeffs=np.asarray(intrinsics["dist"], dtype=np.float64),
+                board_origin_x_m=float(self.ground_board_origin_x_m.value),
+                board_origin_y_m=float(self.ground_board_origin_y_m.value),
+                board_rotation_deg=float(self.ground_board_rotation_deg.value),
+                min_corners=int(self.ground_charuco_min_corners.value),
+                ransac_threshold_m=float(self.charuco_ransac_threshold_m.value),
+            )
+            calibration = merge_and_save_calibration(intrinsics, homography, output_path)
+            message = (
+                f"Saved {_display_path(self.project_root, output_path)} from "
+                f"{calibration['ground_charuco_detected_corner_count']} ChArUco corners. "
+                f"Mean residual: {calibration['ground_marker_mean_residual_m']:.3f} m; "
+                f"max residual: {calibration['ground_marker_max_residual_m']:.3f} m."
+            )
+            self.charuco_homography_status.object = _status_html("Complete", message, kind="success")
+        except Exception as exc:
+            self.charuco_homography_status.object = _status_html(
+                "ChArUco ground calibration failed",
+                str(exc),
+                kind="danger",
+            )
+        finally:
+            self.compute_charuco_homography_button.loading = False
 
     def _on_compute_homography(self, _event: object) -> None:
         self.compute_homography_button.loading = True

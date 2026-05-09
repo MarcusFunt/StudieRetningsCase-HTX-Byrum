@@ -75,19 +75,9 @@ def _timestamp_frame_lookup(timestamps_ms: pd.Series) -> dict[float, int]:
     unique_timestamps = np.sort(
         np.unique(timestamps_ms.dropna().to_numpy(dtype=np.float64))
     )
-    if len(unique_timestamps) == 0:
-        return {}
-
-    deltas_ms = np.diff(unique_timestamps)
-    positive_deltas_ms = deltas_ms[deltas_ms > 0]
-    if len(positive_deltas_ms) == 0:
-        return {float(unique_timestamps[0]): 0}
-
-    median_delta_ms = float(np.median(positive_deltas_ms))
-    first_timestamp_ms = float(unique_timestamps[0])
     return {
-        float(timestamp): round((float(timestamp) - first_timestamp_ms) / median_delta_ms)
-        for timestamp in unique_timestamps
+        float(timestamp): frame_index
+        for frame_index, timestamp in enumerate(unique_timestamps)
     }
 
 

@@ -62,6 +62,20 @@ def test_short_tracks_are_removed():
     assert filtered.empty
 
 
+def test_link_detections_accepts_ground_only_rows_without_sort_metadata():
+    detections = pd.DataFrame(
+        [
+            {"timestamp_ms": 1000, "ground_x_m": 1.0, "ground_y_m": 0.0},
+            {"timestamp_ms": 0, "ground_x_m": 0.0, "ground_y_m": 0.0},
+        ]
+    )
+
+    linked = link_detections(detections, smoothing_alpha=1.0)
+
+    assert linked["timestamp_ms"].tolist() == [0, 1000]
+    assert linked["track_id"].tolist() == [1, 1]
+
+
 def test_velocity_prediction_keeps_ids_when_tracks_cross():
     detections = pd.DataFrame(
         [
@@ -115,6 +129,12 @@ def test_timestamp_frame_lookup_rounds_floating_point_noise():
     assert lookup[100.0] == 1
     assert lookup[199.999999] == 2
     assert lookup[300.0] == 3
+
+
+def test_timestamp_frame_lookup_does_not_collapse_irregular_intervals():
+    lookup = _timestamp_frame_lookup(pd.Series([0.0, 100.0, 149.0, 200.0]))
+
+    assert lookup == {0.0: 0, 100.0: 1, 149.0: 2, 200.0: 3}
 
 
 def test_dwell_flags_and_summary_metrics():

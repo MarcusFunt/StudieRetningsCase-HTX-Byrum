@@ -64,6 +64,14 @@ def _required_ground_columns(detections: pd.DataFrame) -> None:
         raise ValueError(f"Missing required ground columns: {sorted(missing)}")
 
 
+def _tracking_sort_columns(detections: pd.DataFrame) -> list[str]:
+    return [
+        column
+        for column in ("timestamp_ms", "frame_id", "detection_id")
+        if column in detections.columns
+    ]
+
+
 def link_detections(
     detections: pd.DataFrame,
     max_matching_speed_m_s: float = 4.5,
@@ -98,7 +106,7 @@ def link_detections(
         )
 
     ordered = detections.reset_index(drop=True).sort_values(
-        ["timestamp_ms", "frame_id", "detection_id"],
+        _tracking_sort_columns(detections),
         kind="stable",
     )
     active: dict[int, _TrackState] = {}

@@ -1,29 +1,112 @@
+import json
+
 import cv2
 import numpy as np
 import pytest
 
+import pedflow.calibration as calibration_module
 from pedflow.calibration import (
     _MAX_SAFE_BASENAME_LENGTH,
     _reprojection_rms_error,
     _safe_output_basename,
+    calibrate_camera_from_charuco,
     calibrate_camera_from_checkerboard,
     generate_charuco_board,
     read_marker_csv,
 )
 
 
-def test_checkerboard_calibration_rejects_mixed_image_resolutions(tmp_path):
+def test_checkerboard_calibration_ignores_unusable_mixed_image_resolutions(tmp_path):
     first = tmp_path / "first.png"
     second = tmp_path / "second.png"
     cv2.imwrite(str(first), np.zeros((20, 20, 3), dtype=np.uint8))
     cv2.imwrite(str(second), np.zeros((30, 30, 3), dtype=np.uint8))
 
-    with pytest.raises(ValueError, match="same resolution"):
+    with pytest.raises(ValueError, match="No usable checkerboard"):
         calibrate_camera_from_checkerboard(
             [first, second],
             pattern_size=(3, 3),
             square_size_m=0.1,
         )
+
+
+def test_checkerboard_calibration_rejects_mixed_usable_image_resolutions(tmp_path, monkeypatch):
+    first = tmp_path / "first.png"
+    second = tmp_path / "second.png"
+    cv2.imwrite(str(first), np.zeros((20, 20, 3), dtype=np.uint8))
+    cv2.imwrite(str(second), np.zeros((30, 30, 3), dtype=np.uint8))
+
+    corners = np.zeros((9, 1, 2), dtype=np.float32)
+    monkeypatch.setattr(cv2, "findChessboardCorners", lambda _gray, _pattern_size: (True, corners))
+    monkeypatch.setattr(cv2, "cornerSubPix", lambda _gray, found, *_args: found)
+
+    with pytest.raises(ValueError, match=r"usable checkerboard.*same resolution"):
+        calibrate_camera_from_checkerboard(
+            [first, second],
+            pattern_size=(3, 3),
+            square_size_m=0.1,
+        )
+
+
+def test_charuco_calibration_ignores_unusable_image_resolution(tmp_path, monkeypatch):
+    metadata_path = tmp_path / "charuco_board.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "dictionary": "DICT_5X5_100",
+                "squares_x": 5,
+                "squares_y": 4,
+                "square_length_m": 0.03,
+                "marker_length_m": 0.022,
+            }
+        ),
+        encoding="utf-8",
+    )
+    image_paths = [tmp_path / "skipped.png"] + [
+        tmp_path / f"usable_{index}.png" for index in range(3)
+    ]
+    cv2.imwrite(str(image_paths[0]), np.zeros((20, 20, 3), dtype=np.uint8))
+    for path in image_paths[1:]:
+        cv2.imwrite(str(path), np.zeros((30, 30, 3), dtype=np.uint8))
+
+    object_points = np.array(
+        [
+            [[0.0, 0.0, 0.0]],
+            [[1.0, 0.0, 0.0]],
+            [[0.0, 1.0, 0.0]],
+            [[1.0, 1.0, 0.0]],
+        ],
+        dtype=np.float32,
+    )
+    image_points = np.array(
+        [
+            [[0.0, 0.0]],
+            [[10.0, 0.0]],
+            [[0.0, 10.0]],
+            [[10.0, 10.0]],
+        ],
+        dtype=np.float32,
+    )
+
+    def fake_detect(image, _board, min_corners=8):
+        if image.shape[:2] == (20, 20):
+            raise ValueError(f"Detected fewer than {min_corners} ChArUco corners")
+        return object_points, image_points, 4
+
+    def fake_calibrate_camera(obj_points, _img_points, _image_size, *_args):
+        rvecs = [np.zeros((3, 1), dtype=np.float64) for _ in obj_points]
+        tvecs = [np.zeros((3, 1), dtype=np.float64) for _ in obj_points]
+        return 0.0, np.eye(3), np.zeros((5, 1)), rvecs, tvecs
+
+    monkeypatch.setattr(calibration_module, "detect_charuco_image_points", fake_detect)
+    monkeypatch.setattr(cv2, "calibrateCamera", fake_calibrate_camera)
+    monkeypatch.setattr(calibration_module, "_reprojection_rms_error", lambda *_args: 0.0)
+
+    result = calibrate_camera_from_charuco(image_paths, metadata_path, min_corners=4)
+
+    assert result["image_width"] == 30
+    assert result["skipped_image_count"] == 1
+    assert len(result["used_images"]) == 3
 
 
 def test_reprojection_error_reports_rms_pixel_error():
