@@ -196,7 +196,9 @@ def _safe_basename(basename: str) -> str:
     if path.is_absolute() or path.name != basename or basename in {".", ".."}:
         raise ValueError("basename must be a filename stem, not a path")
     if not _SAFE_BASENAME.fullmatch(basename):
-        raise ValueError("basename may only contain letters, numbers, dots, dashes, and underscores")
+        raise ValueError(
+            "basename may only contain letters, numbers, dots, dashes, and underscores"
+        )
     return _truncate_with_digest(basename, _MAX_SAFE_BASENAME_LENGTH)
 
 

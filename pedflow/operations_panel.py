@@ -296,7 +296,9 @@ class OperationsPanel:
             options=output_options,
             value=keep_or_first("outputs/analysis", output_options),
         )
-        self.analysis_save_outputs = pn.widgets.Checkbox(name="Write outputs and QA files", value=True)
+        self.analysis_save_outputs = pn.widgets.Checkbox(
+            name="Write outputs and QA files", value=True
+        )
         self.run_logged_analysis_button = pn.widgets.Button(
             name="Run analysis with logs",
             button_type="primary",
@@ -643,8 +645,7 @@ class OperationsPanel:
             log(f"PNG: {display_path(self.project_root, Path(str(metadata['png_path'])))}")
             log(f"PDF: {display_path(self.project_root, Path(str(metadata['pdf_path'])))}")
             log(
-                "metadata: "
-                f"{display_path(self.project_root, Path(str(metadata['metadata_path'])))}"
+                f"metadata: {display_path(self.project_root, Path(str(metadata['metadata_path'])))}"
             )
             log(
                 f"board size: {metadata['board_width_m']:.3f} m x "

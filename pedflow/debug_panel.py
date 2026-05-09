@@ -198,7 +198,9 @@ class UsbDebugPanel:
         self.max_rows = pn.widgets.IntInput(name="Live row buffer", value=2000, start=100)
         self.refresh_button = pn.widgets.Button(name="Refresh ports/files", height=38)
         self.connection_toggle_button = pn.widgets.Button(name="Connection settings", height=38)
-        self.start_button = pn.widgets.Button(name="Start USB debug", button_type="primary", height=42)
+        self.start_button = pn.widgets.Button(
+            name="Start USB debug", button_type="primary", height=42
+        )
         self.stop_button = pn.widgets.Button(name="Stop", button_type="default", height=42)
         self.status = pn.pane.HTML(
             _status_html(
@@ -315,9 +317,7 @@ class UsbDebugPanel:
     def _on_toggle_connection_settings(self, _event: object) -> None:
         self.connection_section.visible = not self.connection_section.visible
         self.connection_toggle_button.name = (
-            "Hide connection settings"
-            if self.connection_section.visible
-            else "Connection settings"
+            "Hide connection settings" if self.connection_section.visible else "Connection settings"
         )
 
     def _on_start(self, _event: object) -> None:

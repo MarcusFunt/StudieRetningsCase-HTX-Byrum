@@ -211,11 +211,14 @@ class SerialCsvCaptureWorker(_CsvCaptureWorker):
         import serial
 
         self._log(f"opening USB serial {self.port} at {self.baud} baud")
-        with serial.Serial(self.port, self.baud, timeout=0.5) as device, self.output_path.open(
-            "w",
-            encoding="utf-8",
-            newline="",
-        ) as output:
+        with (
+            serial.Serial(self.port, self.baud, timeout=0.5) as device,
+            self.output_path.open(
+                "w",
+                encoding="utf-8",
+                newline="",
+            ) as output,
+        ):
             saw_header = False
             writer = csv.writer(output, lineterminator="\n")
             self._log(f"capturing USB CSV to {self.output_path}")
@@ -301,11 +304,14 @@ class UdpCsvCaptureWorker(_CsvCaptureWorker):
 
     def _run(self) -> None:
         self._log(f"binding UDP {self.host}:{self.port}")
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as receiver, self.output_path.open(
-            "w",
-            encoding="utf-8",
-            newline="",
-        ) as output:
+        with (
+            socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as receiver,
+            self.output_path.open(
+                "w",
+                encoding="utf-8",
+                newline="",
+            ) as output,
+        ):
             receiver.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             receiver.bind((self.host, self.port))
             receiver.settimeout(0.5)

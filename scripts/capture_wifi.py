@@ -38,7 +38,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True, help="Output CSV path")
     parser.add_argument("--host", default=DEFAULT_BIND_HOST, help="Local bind host")
     parser.add_argument("--port", type=int, default=DEFAULT_UDP_PORT, help="UDP port")
-    parser.add_argument("--buffer-size", type=int, default=DEFAULT_BUFFER_SIZE, help="UDP receive buffer")
+    parser.add_argument(
+        "--buffer-size", type=int, default=DEFAULT_BUFFER_SIZE, help="UDP receive buffer"
+    )
     parser.add_argument(
         "--calibration",
         default=None,
@@ -60,11 +62,14 @@ def main() -> int:
     source_counts: dict[str, int] = {}
     firmware_version = UNKNOWN_FIRMWARE_VERSION
 
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as receiver, output_path.open(
-        "w",
-        encoding="utf-8",
-        newline="",
-    ) as output:
+    with (
+        socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as receiver,
+        output_path.open(
+            "w",
+            encoding="utf-8",
+            newline="",
+        ) as output,
+    ):
         receiver.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         receiver.bind((args.host, args.port))
 

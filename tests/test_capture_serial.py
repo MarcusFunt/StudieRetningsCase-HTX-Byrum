@@ -41,10 +41,7 @@ def test_capture_metadata_path_uses_json_sidecar():
 
 def test_firmware_version_parser_accepts_explicit_status_and_udp_heartbeat():
     assert firmware_version_from_status_line("#status,firmware_version,0.1.0") == "0.1.0"
-    assert (
-        firmware_version_from_status_line("#status,udp_heartbeat,1,0,10,9,1,0.1.0")
-        == "0.1.0"
-    )
+    assert firmware_version_from_status_line("#status,udp_heartbeat,1,0,10,9,1,0.1.0") == "0.1.0"
     assert firmware_version_from_status_line("#status,wifi_ap_ready") is None
 
 

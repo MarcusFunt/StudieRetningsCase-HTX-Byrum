@@ -17,11 +17,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", default="outputs/charuco_board", help="Output folder")
     parser.add_argument("--basename", default="charuco_board", help="Output file basename")
-    parser.add_argument("--squares-x", type=int, default=7, help="Number of board squares horizontally")
-    parser.add_argument("--squares-y", type=int, default=5, help="Number of board squares vertically")
+    parser.add_argument(
+        "--squares-x", type=int, default=7, help="Number of board squares horizontally"
+    )
+    parser.add_argument(
+        "--squares-y", type=int, default=5, help="Number of board squares vertically"
+    )
     parser.add_argument("--square-length-mm", type=float, default=35.0, help="Square side length")
-    parser.add_argument("--marker-length-mm", type=float, default=25.0, help="ArUco marker side length")
-    parser.add_argument("--dictionary", default=DEFAULT_CHARUCO_DICTIONARY, help="OpenCV ArUco dictionary")
+    parser.add_argument(
+        "--marker-length-mm", type=float, default=25.0, help="ArUco marker side length"
+    )
+    parser.add_argument(
+        "--dictionary", default=DEFAULT_CHARUCO_DICTIONARY, help="OpenCV ArUco dictionary"
+    )
     parser.add_argument("--dpi", type=int, default=300, help="Printable output DPI")
     parser.add_argument("--margin-mm", type=float, default=10.0, help="White margin around board")
     return parser.parse_args()

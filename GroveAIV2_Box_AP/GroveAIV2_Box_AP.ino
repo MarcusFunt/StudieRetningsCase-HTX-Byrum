@@ -32,6 +32,8 @@ constexpr unsigned long SSCMA_RESET_LOW_MS = 50;
 constexpr unsigned long SSCMA_RESET_SETTLE_MS = 1500;
 constexpr uint8_t SSCMA_MAX_PAYLOAD_LEN = 250;
 constexpr size_t STATUS_BUFFER_SIZE = 120;
+constexpr size_t INVOKE_ERROR_BUFFER_SIZE = 192;
+constexpr size_t SSCMA_ERROR_DETAIL_BUFFER_SIZE = 80;
 constexpr size_t CSV_ROW_BUFFER_SIZE = 160;
 constexpr size_t USB_COMMAND_BUFFER_SIZE = 64;
 constexpr size_t MODULE_TEXT_BUFFER_SIZE = 128;
@@ -166,13 +168,6 @@ void emitTelemetryLine(const char *line)
     Serial.println(line);
   }
   sendUdpLine(line);
-}
-
-void printUsbLine(const char *line)
-{
-  if (usbDebugActive) {
-    Serial.println(line);
-  }
 }
 
 void printCsvHeader()
@@ -769,7 +764,7 @@ void printInvokeError(unsigned long now, const char *stage, const char *reason)
   }
 
   lastInvokeErrorLogMs = now;
-  char line[STATUS_BUFFER_SIZE];
+  char line[INVOKE_ERROR_BUFFER_SIZE];
   snprintf(
       line,
       sizeof(line),
@@ -815,7 +810,7 @@ void printCsvRow(
 bool invokeForDetections(JsonDocument &event, char *error, size_t errorSize)
 {
   JsonDocument response;
-  char detail[STATUS_BUFFER_SIZE] = "";
+  char detail[SSCMA_ERROR_DETAIL_BUFFER_SIZE] = "";
 
   if (!sendSscmaCommand(SSCMA_INVOKE_DETECTIONS_COMMAND, detail, sizeof(detail))) {
     snprintf(error, errorSize, "write_%s", detail);
@@ -1018,7 +1013,7 @@ void printWifiStatusUsbOnly()
       "#status,wifi_ap_runtime,%s,%s,%d,%u",
       WiFi.softAPSSID().c_str(),
       WiFi.softAPIP().toString().c_str(),
-      WiFi.channel(),
+      static_cast<int>(WiFi.channel()),
       static_cast<unsigned int>(WiFi.softAPgetStationNum()));
   Serial.println(line);
 

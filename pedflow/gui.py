@@ -619,10 +619,7 @@ def _count_plot(tracks: pd.DataFrame, bin_seconds: int = 60) -> hv.core.Dimensio
     elapsed_s = (first_seen["timestamp_ms"] - first_seen["timestamp_ms"].min()) / 1000.0
     bins = np.floor(elapsed_s / bin_seconds).astype(int)
     counts = (
-        bins.value_counts()
-        .sort_index()
-        .rename_axis("minute_bin")
-        .reset_index(name="new_tracks")
+        bins.value_counts().sort_index().rename_axis("minute_bin").reset_index(name="new_tracks")
     )
     counts["minute"] = counts["minute_bin"] * bin_seconds / 60.0
 
@@ -794,7 +791,9 @@ class AnalysisPanel:
         self.refresh_files_button = pn.widgets.Button(name="Refresh files", height=38)
         self.upload_toggle_button = pn.widgets.Button(name="Upload files", height=38)
         self.settings_toggle_button = pn.widgets.Button(name="Analysis settings", height=38)
-        self.detections_upload = pn.widgets.FileInput(name="Upload detections CSV", accept=".csv,text/csv")
+        self.detections_upload = pn.widgets.FileInput(
+            name="Upload detections CSV", accept=".csv,text/csv"
+        )
         self.calibration_upload = pn.widgets.FileInput(
             name="Upload calibration JSON",
             accept=".json,application/json",
@@ -820,8 +819,12 @@ class AnalysisPanel:
             value=0.3,
         )
         self.speed_window = pn.widgets.FloatInput(name="Speed window (s)", value=0.75)
-        self.stop_speed_threshold = pn.widgets.FloatInput(name="Stop speed threshold (m/s)", value=0.2)
-        self.stop_duration_threshold = pn.widgets.FloatInput(name="Stop duration threshold (s)", value=2.0)
+        self.stop_speed_threshold = pn.widgets.FloatInput(
+            name="Stop speed threshold (m/s)", value=0.2
+        )
+        self.stop_duration_threshold = pn.widgets.FloatInput(
+            name="Stop duration threshold (s)", value=2.0
+        )
         self.grid_size = pn.widgets.FloatInput(name="Grid size (m)", value=0.5)
         self.run_button = pn.widgets.Button(
             name="Run analysis",
@@ -833,7 +836,9 @@ class AnalysisPanel:
         self.metrics = pn.pane.HTML(_metrics_html(0, 0, 0, 0), sizing_mode="stretch_width")
 
         self.summary_table = pn.widgets.Tabulator(pd.DataFrame(), pagination="remote", page_size=10)
-        self.track_summary_table = pn.widgets.Tabulator(pd.DataFrame(), pagination="remote", page_size=12)
+        self.track_summary_table = pn.widgets.Tabulator(
+            pd.DataFrame(), pagination="remote", page_size=12
+        )
         self.grid_table = pn.widgets.Tabulator(pd.DataFrame(), pagination="remote", page_size=12)
         self.tracks_table = pn.widgets.Tabulator(pd.DataFrame(), pagination="remote", page_size=12)
 
@@ -937,9 +942,13 @@ class AnalysisPanel:
         calibration_options = self._calibration_options()
         output_options = self._output_options()
         self.detections_path.options = detection_options
-        self.detections_path.value = keep_or_first(str(self.detections_path.value), detection_options)
+        self.detections_path.value = keep_or_first(
+            str(self.detections_path.value), detection_options
+        )
         self.calibration_path.options = calibration_options
-        self.calibration_path.value = keep_or_first(str(self.calibration_path.value), calibration_options)
+        self.calibration_path.value = keep_or_first(
+            str(self.calibration_path.value), calibration_options
+        )
         self.output_dir.options = output_options
         self.output_dir.value = keep_or_first(str(self.output_dir.value), output_options)
 
@@ -1139,7 +1148,9 @@ class CalibrationPanel:
             button_type="primary",
             height=42,
         )
-        self.board_status = pn.pane.HTML(_status_html("Ready", "Generate a printable ChArUco board."))
+        self.board_status = pn.pane.HTML(
+            _status_html("Ready", "Generate a printable ChArUco board.")
+        )
 
         self.intrinsics_workflow = _workflow_note(
             "Camera intrinsics",
@@ -1568,7 +1579,9 @@ class CalibrationPanel:
         port_options = serial_port_options()
 
         self.board_output_dir.options = board_output_options
-        self.board_output_dir.value = keep_or_first(str(self.board_output_dir.value), board_output_options)
+        self.board_output_dir.value = keep_or_first(
+            str(self.board_output_dir.value), board_output_options
+        )
         self.board_metadata_path.options = board_metadata_options
         self.board_metadata_path.value = keep_or_first(
             str(self.board_metadata_path.value),
@@ -1612,7 +1625,9 @@ class CalibrationPanel:
             intrinsics_options,
         )
         self.intrinsics_path.options = intrinsics_options
-        self.intrinsics_path.value = keep_or_first(str(self.intrinsics_path.value), intrinsics_options)
+        self.intrinsics_path.value = keep_or_first(
+            str(self.intrinsics_path.value), intrinsics_options
+        )
         self.markers_csv.options = marker_options
         self.markers_csv.value = keep_or_first(str(self.markers_csv.value), marker_options)
         self.calibration_output_path.options = calibration_output_options
@@ -1646,7 +1661,9 @@ class CalibrationPanel:
             self._refresh_board_preview(Path(str(metadata["png_path"])))
             self.board_status.object = _status_html("Complete", message, kind="success")
         except Exception as exc:
-            self.board_status.object = _status_html("Board generation failed", str(exc), kind="danger")
+            self.board_status.object = _status_html(
+                "Board generation failed", str(exc), kind="danger"
+            )
         finally:
             self.generate_board_button.loading = False
 

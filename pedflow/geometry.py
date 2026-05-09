@@ -90,7 +90,9 @@ def bbox_foot_points(detections: pd.DataFrame) -> np.ndarray:
     return np.column_stack([foot_x, foot_y])
 
 
-def undistort_points(points: np.ndarray, camera_matrix: np.ndarray, dist_coeffs: np.ndarray) -> np.ndarray:
+def undistort_points(
+    points: np.ndarray, camera_matrix: np.ndarray, dist_coeffs: np.ndarray
+) -> np.ndarray:
     point_array = np.asarray(points, dtype=np.float64)
     if point_array.size == 0:
         return point_array.reshape(0, 2)

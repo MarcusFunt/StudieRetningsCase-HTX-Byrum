@@ -129,7 +129,9 @@ def build_bbox_overlay(detections: pd.DataFrame) -> pd.DataFrame:
     return output.reset_index(drop=True)
 
 
-def _empty_flow_result(detections: pd.DataFrame, calibration_loaded: bool, error: str | None = None):
+def _empty_flow_result(
+    detections: pd.DataFrame, calibration_loaded: bool, error: str | None = None
+):
     return LiveDebugResult(
         detections=detections,
         bbox_overlay=build_bbox_overlay(detections),

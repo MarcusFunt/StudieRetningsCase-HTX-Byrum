@@ -37,9 +37,7 @@ def test_generator_writes_matching_device_and_laptop_secrets(tmp_path: Path):
     data = json.loads(source_json.read_text(encoding="utf-8"))
     assert data["wifi_ap_ssid"] == "PedFlowTest"
     assert data["wifi_ap_password"] == "ClassroomPass42"
-    assert 'PEDFLOW_WIFI_AP_SSID[] = "PedFlowTest";' in firmware_header.read_text(
-        encoding="utf-8"
-    )
+    assert 'PEDFLOW_WIFI_AP_SSID[] = "PedFlowTest";' in firmware_header.read_text(encoding="utf-8")
     assert 'PEDFLOW_WIFI_AP_PASSWORD[] = "ClassroomPass42";' in firmware_header.read_text(
         encoding="utf-8"
     )

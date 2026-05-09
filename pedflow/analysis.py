@@ -223,7 +223,11 @@ def _plot_density(result: FlowAnalysisResult):
 
 
 def _plot_speed(result: FlowAnalysisResult):
-    grid = result.grid.dropna(subset=["median_speed_m_s"]) if "median_speed_m_s" in result.grid else result.grid
+    grid = (
+        result.grid.dropna(subset=["median_speed_m_s"])
+        if "median_speed_m_s" in result.grid
+        else result.grid
+    )
     return _plot_grid_value(
         grid,
         value_col="median_speed_m_s",

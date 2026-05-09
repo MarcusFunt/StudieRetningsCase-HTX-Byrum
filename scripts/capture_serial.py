@@ -24,7 +24,9 @@ from pedflow.serial_protocol import metadata_path_for as _metadata_path_for
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Capture Grove Vision bbox CSV rows from USB serial.")
+    parser = argparse.ArgumentParser(
+        description="Capture Grove Vision bbox CSV rows from USB serial."
+    )
     parser.add_argument("--port", required=True, help="Serial port, for example COM5")
     parser.add_argument("--baud", type=int, default=115200, help="Serial baud rate")
     parser.add_argument("--output", required=True, help="Output CSV path")
@@ -48,11 +50,14 @@ def main() -> int:
     comment_row_count = 0
     firmware_version = UNKNOWN_FIRMWARE_VERSION
 
-    with serial.Serial(args.port, args.baud, timeout=1) as device, output_path.open(
-        "w",
-        encoding="utf-8",
-        newline="",
-    ) as output:
+    with (
+        serial.Serial(args.port, args.baud, timeout=1) as device,
+        output_path.open(
+            "w",
+            encoding="utf-8",
+            newline="",
+        ) as output,
+    ):
         saw_header = False
         writer = csv.writer(output, lineterminator="\n")
         print(f"Capturing bbox CSV from {args.port} to {output_path}. Press Ctrl+C to stop.")

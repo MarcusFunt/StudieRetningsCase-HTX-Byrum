@@ -72,12 +72,9 @@ def _warn_if_jittery_timestamps(timestamps_ms: pd.Series) -> None:
 
 
 def _timestamp_frame_lookup(timestamps_ms: pd.Series) -> dict[float, int]:
-    unique_timestamps = np.sort(
-        np.unique(timestamps_ms.dropna().to_numpy(dtype=np.float64))
-    )
+    unique_timestamps = np.sort(np.unique(timestamps_ms.dropna().to_numpy(dtype=np.float64)))
     return {
-        float(timestamp): frame_index
-        for frame_index, timestamp in enumerate(unique_timestamps)
+        float(timestamp): frame_index for frame_index, timestamp in enumerate(unique_timestamps)
     }
 
 
@@ -132,14 +129,22 @@ def _frame_step_from_window(window_s: float, frame_rate: float) -> int:
     return max(1, round(window_s * frame_rate / 2.0))
 
 
-def _profile_measurement_area(tracks: pd.DataFrame, grid_size_m: float) -> AxisAlignedMeasurementArea:
+def _profile_measurement_area(
+    tracks: pd.DataFrame, grid_size_m: float
+) -> AxisAlignedMeasurementArea:
     if grid_size_m <= 0:
         raise ValueError("grid_size_m must be greater than zero")
 
     x_min = math.floor(float(tracks["smooth_ground_x_m"].min()) / grid_size_m) * grid_size_m
     y_min = math.floor(float(tracks["smooth_ground_y_m"].min()) / grid_size_m) * grid_size_m
-    x_max = math.floor(float(tracks["smooth_ground_x_m"].max()) / grid_size_m) * grid_size_m + grid_size_m
-    y_max = math.floor(float(tracks["smooth_ground_y_m"].max()) / grid_size_m) * grid_size_m + grid_size_m
+    x_max = (
+        math.floor(float(tracks["smooth_ground_x_m"].max()) / grid_size_m) * grid_size_m
+        + grid_size_m
+    )
+    y_max = (
+        math.floor(float(tracks["smooth_ground_y_m"].max()) / grid_size_m) * grid_size_m
+        + grid_size_m
+    )
     if x_max <= x_min:
         x_max = x_min + grid_size_m
     if y_max <= y_min:
@@ -165,7 +170,9 @@ def _profile_counts(
     if not density_profiles:
         return np.zeros(cells_count, dtype=np.int64)
 
-    density_stack = np.asarray(density_profiles, dtype=np.float64).reshape(len(density_profiles), -1)
+    density_stack = np.asarray(density_profiles, dtype=np.float64).reshape(
+        len(density_profiles), -1
+    )
     counts = np.nansum(density_stack, axis=0) * (grid_size_m * grid_size_m)
     return np.rint(counts).astype(np.int64)
 
@@ -253,14 +260,18 @@ def add_dwell_flags(
                 continue
 
             if run_indices and run_start_ms is not None:
-                duration_s = (float(output.loc[run_indices[-1], "timestamp_ms"]) - run_start_ms) / 1000.0
+                duration_s = (
+                    float(output.loc[run_indices[-1], "timestamp_ms"]) - run_start_ms
+                ) / 1000.0
                 if duration_s >= stop_duration_threshold_s:
                     output.loc[run_indices, "is_dwell"] = True
             run_indices = []
             run_start_ms = None
 
         if run_indices and run_start_ms is not None:
-            duration_s = (float(output.loc[run_indices[-1], "timestamp_ms"]) - run_start_ms) / 1000.0
+            duration_s = (
+                float(output.loc[run_indices[-1], "timestamp_ms"]) - run_start_ms
+            ) / 1000.0
             if duration_s >= stop_duration_threshold_s:
                 output.loc[run_indices, "is_dwell"] = True
 
@@ -352,8 +363,8 @@ def summarize_flow(tracks: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame([rows])
 
     duration_min = (
-        float(tracks["timestamp_ms"].max()) - float(tracks["timestamp_ms"].min())
-    ) / 1000.0 / 60.0
+        (float(tracks["timestamp_ms"].max()) - float(tracks["timestamp_ms"].min())) / 1000.0 / 60.0
+    )
     duration_min = max(duration_min, 0.0)
     pedestrian_count = int(tracks["track_id"].nunique())
     people_per_minute = pedestrian_count / duration_min if duration_min > 0 else np.nan
@@ -418,9 +429,7 @@ def grid_statistics(
     occupied = stats["detection_count"] > 0
 
     if "speed_m_s" in prepared.tracks.columns:
-        speed_data = prepared.tracks[
-            ["track_id", _PEDPY_FRAME_COL, "speed_m_s"]
-        ].rename(
+        speed_data = prepared.tracks[["track_id", _PEDPY_FRAME_COL, "speed_m_s"]].rename(
             columns={
                 "track_id": ID_COL,
                 _PEDPY_FRAME_COL: FRAME_COL,

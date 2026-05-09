@@ -59,7 +59,9 @@ def _safe_output_basename(basename: str) -> str:
     if path.is_absolute() or path.name != basename or basename in {".", ".."}:
         raise ValueError("basename must be a filename stem, not a path")
     if not _SAFE_BASENAME.fullmatch(basename):
-        raise ValueError("basename may only contain letters, numbers, dots, dashes, and underscores")
+        raise ValueError(
+            "basename may only contain letters, numbers, dots, dashes, and underscores"
+        )
     return _truncate_with_digest(basename, _MAX_SAFE_BASENAME_LENGTH)
 
 
@@ -284,9 +286,7 @@ def homography_quality_report(calibration: dict) -> dict:
     max_residual = _optional_float(calibration.get("ground_marker_max_residual_m"))
     marker_count = int(calibration.get("ground_marker_count", 0))
     inliers = calibration.get("ground_marker_inliers", [])
-    inlier_ratio = (
-        float(np.mean(np.asarray(inliers, dtype=bool))) if len(inliers) > 0 else None
-    )
+    inlier_ratio = float(np.mean(np.asarray(inliers, dtype=bool))) if len(inliers) > 0 else None
 
     issues: list[str] = []
     failed = False
@@ -331,15 +331,9 @@ def homography_quality_report(calibration: dict) -> dict:
 def calibration_quality_report(calibration: dict) -> dict:
     intrinsics = intrinsics_quality_report(calibration) if "K" in calibration else None
     homography = (
-        homography_quality_report(calibration)
-        if "H_image_to_ground" in calibration
-        else None
+        homography_quality_report(calibration) if "H_image_to_ground" in calibration else None
     )
-    statuses = [
-        report["status"]
-        for report in (intrinsics, homography)
-        if report is not None
-    ]
+    statuses = [report["status"] for report in (intrinsics, homography) if report is not None]
     overall = "fail" if "fail" in statuses else "warn" if "warn" in statuses else "pass"
     return {
         "status": overall,
@@ -523,7 +517,9 @@ def calibrate_camera_from_checkerboard(
         if image_size is None:
             image_size = current_image_size
         elif image_size != current_image_size:
-            raise ValueError("All usable checkerboard calibration images must have the same resolution")
+            raise ValueError(
+                "All usable checkerboard calibration images must have the same resolution"
+            )
 
         refined = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
         object_points.append(object_template.copy())
