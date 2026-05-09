@@ -79,8 +79,8 @@ hv.extension("bokeh")
 
 _UI_CSS = """
 :root {
-  --pedflow-bg: #f3f6f8;
-  --pedflow-bg-strong: #eaf1f3;
+  --pedflow-bg: #eef4f6;
+  --pedflow-bg-strong: #e6eef1;
   --pedflow-panel: #ffffff;
   --pedflow-ink: #152029;
   --pedflow-muted: #5a6977;
@@ -99,7 +99,16 @@ body {
   background: var(--pedflow-bg);
 }
 .bk-FastListTemplate .bk-main {
-  padding-top: 18px !important;
+  padding-top: 16px !important;
+}
+#main > .card-margin {
+  margin: 14px 14px 28px !important;
+}
+#main > .card-margin > fast-card.pn-wrapper {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
 }
 #header {
   box-shadow: 0 8px 24px rgba(15, 29, 38, 0.14);
@@ -145,14 +154,25 @@ body {
 .pedflow-workspace > *:not(.pedflow-controls) {
   min-width: 0;
 }
+.pedflow-results {
+  min-width: 0;
+}
 .pedflow-controls {
   background: var(--pedflow-panel);
   border: 1px solid var(--pedflow-line);
   border-radius: 8px;
   box-sizing: border-box;
-  box-shadow: 0 10px 26px rgba(21, 32, 41, 0.05);
+  box-shadow: 0 8px 22px rgba(21, 32, 41, 0.045);
   min-width: 0;
-  padding: 18px 18px 20px;
+  padding: 20px 20px 22px;
+}
+.pedflow-controls label {
+  color: var(--pedflow-ink);
+  font-size: 13px;
+  font-weight: 650;
+}
+.pedflow-controls .bk-input-group {
+  margin-bottom: 10px;
 }
 .pedflow-button-row {
   gap: 10px;
@@ -182,10 +202,15 @@ body {
   text-transform: uppercase;
 }
 .pedflow-preview {
+  align-items: center;
   background: #f8fbfc;
   border: 1px dashed var(--pedflow-line-strong);
   border-radius: 8px;
-  min-height: 246px;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: center;
+  max-height: min(44vh, 330px);
+  min-height: 226px;
   overflow: hidden;
   padding: 14px;
 }
@@ -199,12 +224,22 @@ body {
   min-height: 214px;
   text-align: center;
 }
+.pedflow-board-image {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  max-width: 100%;
+}
 .pedflow-board-image img {
   background: #ffffff;
   border: 1px solid var(--pedflow-line);
   border-radius: 6px;
   box-shadow: 0 8px 20px rgba(21, 32, 41, 0.08);
+  height: auto !important;
+  max-height: min(38vh, 280px);
+  max-width: 100%;
   object-fit: contain;
+  width: auto !important;
 }
 .pedflow-controls .bk-input,
 .pedflow-controls select,
@@ -270,21 +305,21 @@ body {
 }
 .pedflow-empty {
   align-items: center;
-  background: linear-gradient(180deg, #fbfdfd 0%, var(--pedflow-bg-strong) 100%);
+  background: #f7fafb;
   border: 1px solid var(--pedflow-line);
   border-radius: 8px;
   color: var(--pedflow-muted);
   display: flex;
   flex-direction: column;
   font-family: Inter, "Segoe UI", system-ui, sans-serif;
-  gap: 8px;
+  gap: 7px;
   justify-content: center;
-  min-height: 360px;
+  min-height: 344px;
   text-align: center;
 }
 .pedflow-empty strong {
   color: var(--pedflow-ink);
-  font-size: 18px;
+  font-size: 17px;
 }
 .pedflow-empty span {
   font-size: 14px;
@@ -295,12 +330,12 @@ body {
   border: 1px solid var(--pedflow-line);
   border-left: 4px solid var(--pedflow-accent);
   border-radius: 8px;
-  box-shadow: 0 10px 26px rgba(21, 32, 41, 0.04);
+  box-shadow: 0 8px 20px rgba(21, 32, 41, 0.035);
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-height: 74px;
-  padding: 16px 18px;
+  min-height: 68px;
+  padding: 15px 18px;
 }
 .pedflow-status-title {
   color: var(--pedflow-ink);
@@ -330,9 +365,9 @@ body {
   background: #ffffff;
   border: 1px solid var(--pedflow-line);
   border-radius: 8px;
-  box-shadow: 0 10px 26px rgba(21, 32, 41, 0.04);
-  min-height: 118px;
-  padding: 18px 18px 16px;
+  box-shadow: 0 8px 20px rgba(21, 32, 41, 0.035);
+  min-height: 106px;
+  padding: 16px 18px 14px;
 }
 .pedflow-metric-label {
   color: var(--pedflow-muted);
@@ -343,11 +378,11 @@ body {
 }
 .pedflow-metric-value {
   color: var(--pedflow-ink);
-  font-size: 42px;
+  font-size: 38px;
   font-weight: 700;
   letter-spacing: 0;
   line-height: 1.05;
-  margin-top: 16px;
+  margin-top: 14px;
   white-space: nowrap;
 }
 .pedflow-metric-unit {
@@ -361,6 +396,7 @@ body {
   font-weight: 700;
   padding-left: 16px;
   padding-right: 16px;
+  min-height: 39px;
 }
 .pedflow-tabs .bk-tab.bk-active {
   color: var(--pedflow-accent-strong);
@@ -398,33 +434,99 @@ body {
     display: none !important;
   }
   .bk-FastListTemplate .bk-main {
-    padding-left: 10px !important;
-    padding-right: 10px !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+  #container,
+  #content,
+  #main {
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+  #main > .card-margin {
+    margin: 10px 8px 22px !important;
   }
   .pedflow-layout {
     display: flex !important;
     flex-direction: column !important;
     gap: 14px;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
   }
   .pedflow-layout > *,
   .pedflow-controls {
     flex: 1 1 auto !important;
+    height: auto !important;
+    max-height: none !important;
     max-width: 100% !important;
     min-width: 0 !important;
+    overflow: visible !important;
     width: 100% !important;
+  }
+  .pedflow-results,
+  .pedflow-workspace > .pedflow-results {
+    height: auto !important;
+    max-height: none !important;
+    min-height: 520px !important;
+    overflow: visible !important;
   }
   .pedflow-workspace > .pedflow-controls {
     flex-basis: auto !important;
   }
+  .pedflow-tabs .bk-headers-wrapper {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .bk-headers-wrapper {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+  .pedflow-tabs .bk-headers-wrapper::-webkit-scrollbar {
+    display: none !important;
+    height: 0 !important;
+    width: 0 !important;
+  }
+  .bk-headers-wrapper::-webkit-scrollbar {
+    display: none !important;
+    height: 0 !important;
+    width: 0 !important;
+  }
+  .pedflow-tabs .scroll-button,
+  .scroll-button {
+    background: transparent !important;
+    opacity: 0.5;
+  }
   .pedflow-tabs .bk-tab {
+    font-size: 13px;
     padding-left: 10px;
     padding-right: 10px;
+  }
+  .pedflow-controls {
+    padding: 18px 20px 20px;
+  }
+  .pedflow-preview {
+    max-height: 280px;
+  }
+  .pedflow-board-image img {
+    max-height: 220px;
+  }
+  .pedflow-empty {
+    min-height: 300px;
   }
   .pedflow-metrics {
     grid-template-columns: minmax(0, 1fr);
   }
   .pedflow-metric-value {
     font-size: 34px;
+  }
+}
+@media (max-width: 420px) {
+  .pedflow-tabs .bk-tab {
+    font-size: 12px;
+    min-height: 36px;
+    padding-left: 7px;
+    padding-right: 7px;
   }
 }
 """
@@ -805,6 +907,7 @@ class AnalysisPanel:
                 dynamic=True,
                 css_classes=["pedflow-tabs"],
             ),
+            css_classes=["pedflow-results"],
             sizing_mode="stretch_width",
         )
         return pn.Column(
@@ -1551,8 +1654,8 @@ class CalibrationPanel:
         if image_path.exists():
             preview = pn.pane.PNG(
                 str(image_path),
-                height=214,
-                sizing_mode="scale_width",
+                height=260,
+                width=360,
                 css_classes=["pedflow-board-image"],
             )
         else:

@@ -280,7 +280,17 @@ class UsbDebugPanel:
             css_classes=["pedflow-tabs"],
         )
         return pn.Column(
-            pn.Row(controls, pn.Column(self.status, self.metrics, plots, tables), css_classes=["pedflow-layout"]),
+            pn.Row(
+                controls,
+                pn.Column(
+                    self.status,
+                    self.metrics,
+                    plots,
+                    tables,
+                    css_classes=["pedflow-results"],
+                ),
+                css_classes=["pedflow-layout"],
+            ),
             sizing_mode="stretch_width",
         )
 

@@ -359,7 +359,12 @@ class OperationsPanel:
         return pn.Column(
             pn.Row(
                 controls,
-                pn.Column(self.capture_status, self.capture_metrics, self.capture_log),
+                pn.Column(
+                    self.capture_status,
+                    self.capture_metrics,
+                    self.capture_log,
+                    css_classes=["pedflow-results"],
+                ),
                 css_classes=["pedflow-layout", "pedflow-workspace"],
             ),
             sizing_mode="stretch_width",
@@ -383,7 +388,11 @@ class OperationsPanel:
         return pn.Column(
             pn.Row(
                 controls,
-                pn.Column(self.operation_status, self.operation_log),
+                pn.Column(
+                    self.operation_status,
+                    self.operation_log,
+                    css_classes=["pedflow-results"],
+                ),
                 css_classes=["pedflow-layout", "pedflow-workspace"],
             ),
             sizing_mode="stretch_width",
@@ -418,7 +427,11 @@ class OperationsPanel:
         return pn.Column(
             pn.Row(
                 pn.Column(secrets_controls, board_controls),
-                pn.Column(self.operation_status, self.operation_log),
+                pn.Column(
+                    self.operation_status,
+                    self.operation_log,
+                    css_classes=["pedflow-results"],
+                ),
                 css_classes=["pedflow-layout", "pedflow-workspace"],
             ),
             sizing_mode="stretch_width",
@@ -439,7 +452,11 @@ class OperationsPanel:
         return pn.Column(
             pn.Row(
                 controls,
-                pn.Column(self.operation_status, self.operation_log),
+                pn.Column(
+                    self.operation_status,
+                    self.operation_log,
+                    css_classes=["pedflow-results"],
+                ),
                 css_classes=["pedflow-layout", "pedflow-workspace"],
             ),
             sizing_mode="stretch_width",
