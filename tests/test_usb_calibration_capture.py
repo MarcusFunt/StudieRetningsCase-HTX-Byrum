@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from pedflow.usb_calibration_capture import (
     CALIBRATION_CAPTURE_COMMAND,
     _safe_basename,
     _unique_capture_path,
+    _write_capture,
     decode_calibration_image_payload,
     metadata_path_for,
     request_calibration_image,
@@ -82,3 +84,33 @@ def test_usb_capture_basename_is_truncated_before_timestamp(tmp_path):
     assert shortened != _safe_basename(f"{basename}b")
     assert image_path.name.startswith(shortened)
     assert len(image_path.name) < 255
+
+
+def test_usb_capture_sidecar_records_manifest_fields(tmp_path):
+    capture = _write_capture(
+        output_dir=tmp_path,
+        basename="charuco_usb",
+        index=1,
+        total_count=1,
+        started_at=datetime(2026, 5, 9, 10, 0, tzinfo=UTC),
+        captured_at=datetime(2026, 5, 9, 10, 0, 2, tzinfo=UTC),
+        jpeg=b"\xff\xd8\xff\xd9",
+        port="COM5",
+        baud=115200,
+        timeout_s=12.5,
+        firmware_version="0.1.0",
+        calibration_path=tmp_path / "calibration.json",
+        settings={"workflow": "ground_homography"},
+    )
+
+    metadata = json.loads(capture.metadata_path.read_text(encoding="utf-8"))
+    assert metadata["schema_version"] == 1
+    assert metadata["session_type"] == "calibration_image_capture"
+    assert metadata["start_utc"] == "2026-05-09T10:00:00+00:00"
+    assert metadata["end_utc"] == "2026-05-09T10:00:02+00:00"
+    assert metadata["firmware_version"] == "0.1.0"
+    assert metadata["calibration_json_path"].endswith("calibration.json")
+    assert metadata["settings"]["transport"] == "usb_serial"
+    assert metadata["settings"]["workflow"] == "ground_homography"
+    assert metadata["output_files"]["calibration_image"] == str(capture.image_path)
+    assert metadata["output_files"]["metadata_json"] == str(capture.metadata_path)

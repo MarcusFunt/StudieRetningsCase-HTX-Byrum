@@ -5,6 +5,7 @@ import threading
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 import cv2
@@ -295,7 +296,7 @@ class OperationsPanel:
             options=output_options,
             value=keep_or_first("outputs/analysis", output_options),
         )
-        self.analysis_save_outputs = pn.widgets.Checkbox(name="Write CSV outputs", value=True)
+        self.analysis_save_outputs = pn.widgets.Checkbox(name="Write outputs and QA files", value=True)
         self.run_logged_analysis_button = pn.widgets.Button(
             name="Run analysis with logs",
             button_type="primary",
@@ -571,6 +572,7 @@ class OperationsPanel:
                 interval_s=float(self.image_interval_s.value),
                 settle_delay_s=float(self.image_settle_delay_s.value),
                 timeout_s=float(self.image_timeout_s.value),
+                settings={"workflow": "operations_usb_image_capture"},
             )
             for capture in captures:
                 log(
@@ -661,6 +663,7 @@ class OperationsPanel:
             log(f"loaded {len(detections):,} raw detection row(s)")
             log(f"reading calibration: {display_path(self.project_root, calibration_path)}")
             calibration = load_calibration(calibration_path)
+            started_utc = datetime.now(UTC).isoformat()
             result = run_flow_analysis(
                 detections,
                 calibration,
@@ -669,10 +672,18 @@ class OperationsPanel:
             )
             if bool(self.analysis_save_outputs.value):
                 log(
-                    "writing analysis CSV outputs to "
+                    "writing analysis CSV, QA, and manifest outputs to "
                     f"{display_path(self.project_root, output_dir)}"
                 )
-                write_analysis_outputs(result, output_dir)
+                write_analysis_outputs(
+                    result,
+                    output_dir,
+                    settings=FlowAnalysisSettings(),
+                    detections_path=detections_path,
+                    calibration_path=calibration_path,
+                    started_utc=started_utc,
+                    ended_utc=datetime.now(UTC).isoformat(),
+                )
             track_count = result.tracks["track_id"].nunique() if not result.tracks.empty else 0
             log(f"PedPy output grid cells: {len(result.grid):,}")
             return (

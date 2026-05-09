@@ -6,10 +6,20 @@ from pathlib import Path
 
 CSV_HEADER = "timestamp_ms,frame_id,detection_id,bbox_x,bbox_y,bbox_w,bbox_h,confidence,target"
 CSV_COLUMNS = CSV_HEADER.split(",")
+UNKNOWN_FIRMWARE_VERSION = "unknown"
 
 
 def metadata_path_for(output_path: Path) -> Path:
     return output_path.with_suffix(".metadata.json")
+
+
+def firmware_version_from_status_line(line: str) -> str | None:
+    parts = [part.strip() for part in line.strip().split(",")]
+    if len(parts) >= 3 and parts[0] == "#status" and parts[1] == "firmware_version":
+        return parts[2] or UNKNOWN_FIRMWARE_VERSION
+    if len(parts) >= 8 and parts[0] == "#status" and parts[1] == "udp_heartbeat":
+        return parts[7] or UNKNOWN_FIRMWARE_VERSION
+    return None
 
 
 def _parse_float(value: str, column: str) -> float:

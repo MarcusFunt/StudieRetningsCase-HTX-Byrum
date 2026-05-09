@@ -1,3 +1,4 @@
+import json
 import socket
 import subprocess
 import sys
@@ -71,7 +72,7 @@ def test_udp_capture_worker_writes_rows_and_metadata(tmp_path):
 
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
             sender.sendto(
-                b"#status,wifi_ap_ready\n100,1,0,10.5,20.0,4,8,0.700,0\n",
+                b"#status,firmware_version,0.1.0\n100,1,0,10.5,20.0,4,8,0.700,0\n",
                 ("127.0.0.1", port),
             )
 
@@ -90,4 +91,13 @@ def test_udp_capture_worker_writes_rows_and_metadata(tmp_path):
     text = output_path.read_text(encoding="utf-8")
     assert CSV_COLUMNS[0] in text
     assert "100,1,0,10.5,20.0,4,8,0.700,0" in text
-    assert output_path.with_suffix(".metadata.json").exists()
+    metadata_path = output_path.with_suffix(".metadata.json")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata["schema_version"] == 1
+    assert metadata["session_type"] == "detection_capture"
+    assert metadata["firmware_version"] == "0.1.0"
+    assert metadata["calibration_json_path"] is None
+    assert metadata["settings"]["transport"] == "udp_wifi_ap"
+    assert metadata["settings"]["port"] == port
+    assert metadata["output_files"]["detections_csv"] == str(output_path)
+    assert metadata["output_files"]["metadata_json"] == str(metadata_path)

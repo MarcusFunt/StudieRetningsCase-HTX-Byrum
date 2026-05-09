@@ -66,6 +66,8 @@ def test_field_firmware_sends_anonymous_rows_over_wifi_udp():
     assert "IPAddress(192, 168, 4, host)" in source
     assert "udpPacketFailureCount" in source
     assert "#status,udp_heartbeat" in source
+    assert "PEDFLOW_FIRMWARE_VERSION" in source
+    assert '"firmware_version"' in source
     assert "4210" in source
     assert "WIFI_AP_PASSWORD[]" not in source
 

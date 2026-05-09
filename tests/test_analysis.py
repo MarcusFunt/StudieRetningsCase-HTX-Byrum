@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 import pandas as pd
 
@@ -40,7 +42,18 @@ def test_run_flow_analysis_returns_tables_and_writes_outputs(tmp_path):
         calibration,
         FlowAnalysisSettings(smoothing_alpha=1.0),
     )
-    write_analysis_outputs(result, tmp_path)
+    detections_path = tmp_path / "input.csv"
+    calibration_path = tmp_path / "calibration.json"
+    settings = FlowAnalysisSettings(smoothing_alpha=1.0)
+    outputs = write_analysis_outputs(
+        result,
+        tmp_path,
+        settings=settings,
+        detections_path=detections_path,
+        calibration_path=calibration_path,
+        started_utc="2026-05-09T10:00:00+00:00",
+        ended_utc="2026-05-09T10:01:00+00:00",
+    )
 
     assert int(result.summary.loc[0, "pedestrian_count"]) == 2
     assert result.track_summaries["track_id"].tolist() == [1, 2]
@@ -50,4 +63,18 @@ def test_run_flow_analysis_returns_tables_and_writes_outputs(tmp_path):
     assert (tmp_path / "track_summaries.csv").exists()
     assert (tmp_path / "summary_metrics.csv").exists()
     assert (tmp_path / "grid_metrics.csv").exists()
-    assert not list(tmp_path.glob("*.png"))
+    assert (tmp_path / "paths_qa.png").exists()
+    assert (tmp_path / "density_qa.html").exists()
+    assert len(list(tmp_path.glob("*_qa.png"))) == 5
+    assert len(list(tmp_path.glob("*_qa.html"))) == 5
+
+    manifest = json.loads((tmp_path / "analysis_manifest.json").read_text(encoding="utf-8"))
+    assert outputs["analysis_manifest_json"] == tmp_path / "analysis_manifest.json"
+    assert manifest["schema_version"] == 1
+    assert manifest["session_type"] == "analysis"
+    assert manifest["start_utc"] == "2026-05-09T10:00:00+00:00"
+    assert manifest["end_utc"] == "2026-05-09T10:01:00+00:00"
+    assert manifest["calibration_json_path"] == str(calibration_path)
+    assert manifest["detections_csv_path"] == str(detections_path)
+    assert manifest["settings"]["smoothing_alpha"] == settings.smoothing_alpha
+    assert manifest["output_files"]["paths_qa_png"].endswith("paths_qa.png")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import io
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import holoviews as hv
@@ -611,6 +612,60 @@ def _status_html(title: str, message: str, kind: str = "info") -> str:
     """
 
 
+def _quality_status_kind(status: str) -> str:
+    if status == "pass":
+        return "success"
+    if status == "fail":
+        return "danger"
+    return "info"
+
+
+def _quality_frame(report: dict | None) -> pd.DataFrame:
+    if not report:
+        return pd.DataFrame(columns=["metric", "value"])
+    rows = []
+    for key, value in report.items():
+        if key == "issues":
+            continue
+        if isinstance(value, float):
+            value = f"{value:.4g}"
+        rows.append({"metric": key, "value": value})
+    issues = report.get("issues") or []
+    for index, issue in enumerate(issues, start=1):
+        rows.append({"metric": f"issue_{index}", "value": issue})
+    return pd.DataFrame(rows)
+
+
+def _intrinsics_image_error_frame(calibration: dict) -> pd.DataFrame:
+    used_images = calibration.get("used_images", [])
+    errors = calibration.get("per_image_reprojection_error_px", [])
+    return pd.DataFrame(
+        [
+            {"image": image, "reprojection_error_px": error}
+            for image, error in zip(used_images, errors, strict=False)
+        ]
+    )
+
+
+def _skipped_images_frame(calibration: dict) -> pd.DataFrame:
+    return pd.DataFrame(calibration.get("skipped_images", []))
+
+
+def _homography_residual_frame(calibration: dict) -> pd.DataFrame:
+    residuals = calibration.get("ground_marker_residuals_m", [])
+    inliers = calibration.get("ground_marker_inliers", [])
+    return pd.DataFrame(
+        [
+            {
+                "marker": index + 1,
+                "residual_m": residual,
+                "inlier": inliers[index] if index < len(inliers) else True,
+            }
+            for index, residual in enumerate(residuals)
+        ]
+    )
+
+
 class AnalysisPanel:
     def __init__(self, project_root: Path) -> None:
         self.project_root = project_root
@@ -642,7 +697,7 @@ class AnalysisPanel:
             name="Upload calibration JSON",
             accept=".json,application/json",
         )
-        self.save_outputs = pn.widgets.Checkbox(name="Write CSV outputs", value=True)
+        self.save_outputs = pn.widgets.Checkbox(name="Write outputs and QA files", value=True)
 
         self.confidence_threshold = pn.widgets.FloatSlider(
             name="Confidence threshold",
@@ -838,6 +893,7 @@ class AnalysisPanel:
         self._set_status("Running", "Analysis is processing with the current inputs.")
 
         try:
+            started_utc = datetime.now(UTC).isoformat()
             detections = self._read_detections()
             calibration = self._read_calibration()
             settings = self._settings()
@@ -845,7 +901,21 @@ class AnalysisPanel:
 
             if self.save_outputs.value:
                 output = _resolve_path(self.project_root, self.output_dir.value)
-                write_analysis_outputs(self.result, output)
+                output_files = write_analysis_outputs(
+                    self.result,
+                    output,
+                    settings=settings,
+                    detections_path="uploaded"
+                    if self.detections_upload.value
+                    else self.detections_path.value,
+                    calibration_path="uploaded"
+                    if self.calibration_upload.value
+                    else self.calibration_path.value,
+                    started_utc=started_utc,
+                    ended_utc=datetime.now(UTC).isoformat(),
+                )
+            else:
+                output_files = {}
 
             self._update_outputs(self.result)
             message = (
@@ -853,7 +923,11 @@ class AnalysisPanel:
                 f"{self.result.tracks['track_id'].nunique() if not self.result.tracks.empty else 0:,} tracks."
             )
             if self.save_outputs.value:
-                message += f" CSV outputs written to {self.output_dir.value}."
+                qa_count = len([key for key in output_files if key.endswith("_qa_png")])
+                message += (
+                    f" Outputs written to {self.output_dir.value} "
+                    f"({qa_count} QA plot set(s) plus manifest)."
+                )
             self._set_status("Complete", message, kind="success")
         except Exception as exc:
             self._set_status("Analysis failed", str(exc), kind="danger")
@@ -1033,6 +1107,21 @@ class CalibrationPanel:
         self.intrinsics_status = pn.pane.HTML(
             _status_html("Ready", "Use ChArUco board photos from the intrinsics folder.")
         )
+        self.intrinsics_quality_table = pn.widgets.Tabulator(
+            pd.DataFrame(columns=["metric", "value"]),
+            pagination="remote",
+            page_size=10,
+        )
+        self.intrinsics_image_errors_table = pn.widgets.Tabulator(
+            pd.DataFrame(columns=["image", "reprojection_error_px"]),
+            pagination="remote",
+            page_size=8,
+        )
+        self.intrinsics_skipped_images_table = pn.widgets.Tabulator(
+            pd.DataFrame(columns=["path", "reason"]),
+            pagination="remote",
+            page_size=8,
+        )
 
         self.ground_image_dir = pn.widgets.Select(
             name="Ground marker photo folder",
@@ -1118,6 +1207,16 @@ class CalibrationPanel:
                 "Ready",
                 "Use a flat ground ChArUco photo to build homography without manual clicking.",
             )
+        )
+        self.homography_quality_table = pn.widgets.Tabulator(
+            pd.DataFrame(columns=["metric", "value"]),
+            pagination="remote",
+            page_size=10,
+        )
+        self.homography_residuals_table = pn.widgets.Tabulator(
+            pd.DataFrame(columns=["marker", "residual_m", "inlier"]),
+            pagination="remote",
+            page_size=12,
         )
 
         self.intrinsics_path = pn.widgets.Select(
@@ -1230,6 +1329,13 @@ class CalibrationPanel:
             ),
             self.capture_status,
             self.intrinsics_status,
+            pn.Tabs(
+                ("Quality", self.intrinsics_quality_table),
+                ("Per-image errors", self.intrinsics_image_errors_table),
+                ("Skipped images", self.intrinsics_skipped_images_table),
+                dynamic=True,
+                css_classes=["pedflow-tabs"],
+            ),
         )
 
     def _homography_panel(self) -> pn.Column:
@@ -1276,6 +1382,12 @@ class CalibrationPanel:
             self.ground_capture_status,
             self.charuco_homography_status,
             self.homography_status,
+            pn.Tabs(
+                ("Quality", self.homography_quality_table),
+                ("Residuals", self.homography_residuals_table),
+                dynamic=True,
+                css_classes=["pedflow-tabs"],
+            ),
         )
 
     def _board_output_options(self) -> list[str]:
@@ -1463,6 +1575,26 @@ class CalibrationPanel:
             saved_names = f"{saved_names}, ..."
         return saved_names
 
+    def _update_intrinsics_quality(self, intrinsics: dict) -> str:
+        report = intrinsics.get("intrinsics_quality", {})
+        self.intrinsics_quality_table.value = _quality_frame(report)
+        self.intrinsics_image_errors_table.value = _rounded_frame(
+            _intrinsics_image_error_frame(intrinsics)
+        )
+        self.intrinsics_skipped_images_table.value = _skipped_images_frame(intrinsics)
+        return str(report.get("status", "warn"))
+
+    def _update_homography_quality(self, calibration: dict) -> str:
+        report = calibration.get("homography_quality") or (
+            calibration.get("calibration_quality", {}).get("homography")
+        )
+        self.homography_quality_table.value = _quality_frame(report)
+        self.homography_residuals_table.value = _rounded_frame(
+            _homography_residual_frame(calibration),
+            digits=4,
+        )
+        return str((report or {}).get("status", "warn"))
+
     def _on_capture_usb_photo(self, _event: object) -> None:
         self.capture_usb_photo_button.loading = True
         self.capture_status.object = _status_html(
@@ -1482,6 +1614,10 @@ class CalibrationPanel:
                 interval_s=float(self.capture_interval_s.value),
                 settle_delay_s=float(self.capture_settle_delay_s.value),
                 timeout_s=float(self.capture_timeout_s.value),
+                settings={
+                    "workflow": "camera_intrinsics",
+                    "image_folder_role": "intrinsics",
+                },
             )
             saved_names = self._saved_capture_names(captures)
             self._on_refresh_calibration_files(_event)
@@ -1518,6 +1654,11 @@ class CalibrationPanel:
                 interval_s=float(self.ground_capture_interval_s.value),
                 settle_delay_s=float(self.ground_capture_settle_delay_s.value),
                 timeout_s=float(self.ground_capture_timeout_s.value),
+                calibration_path=self.intrinsics_path.value,
+                settings={
+                    "workflow": "ground_homography",
+                    "image_folder_role": "ground",
+                },
             )
             saved_names = self._saved_capture_names(captures)
             self._on_refresh_calibration_files(_event)
@@ -1565,12 +1706,18 @@ class CalibrationPanel:
                 min_corners=int(self.min_corners.value),
             )
             save_calibration(intrinsics, output_path)
+            quality_status = self._update_intrinsics_quality(intrinsics)
             message = (
                 f"Saved {_display_path(self.project_root, output_path)} from "
                 f"{len(intrinsics['used_images'])} images. "
-                f"RMS reprojection error: {intrinsics['rms_reprojection_error_px']:.3f} px."
+                f"RMS reprojection error: {intrinsics['rms_reprojection_error_px']:.3f} px. "
+                f"Quality: {quality_status.upper()}."
             )
-            self.intrinsics_status.object = _status_html("Complete", message, kind="success")
+            self.intrinsics_status.object = _status_html(
+                "Complete",
+                message,
+                kind=_quality_status_kind(quality_status),
+            )
         except Exception as exc:
             self.intrinsics_status.object = _status_html(
                 "Intrinsics calibration failed",
@@ -1607,13 +1754,19 @@ class CalibrationPanel:
                 ransac_threshold_m=float(self.charuco_ransac_threshold_m.value),
             )
             calibration = merge_and_save_calibration(intrinsics, homography, output_path)
+            quality_status = self._update_homography_quality(calibration)
             message = (
                 f"Saved {_display_path(self.project_root, output_path)} from "
                 f"{calibration['ground_charuco_detected_corner_count']} ChArUco corners. "
                 f"Mean residual: {calibration['ground_marker_mean_residual_m']:.3f} m; "
-                f"max residual: {calibration['ground_marker_max_residual_m']:.3f} m."
+                f"max residual: {calibration['ground_marker_max_residual_m']:.3f} m. "
+                f"Quality: {quality_status.upper()}."
             )
-            self.charuco_homography_status.object = _status_html("Complete", message, kind="success")
+            self.charuco_homography_status.object = _status_html(
+                "Complete",
+                message,
+                kind=_quality_status_kind(quality_status),
+            )
         except Exception as exc:
             self.charuco_homography_status.object = _status_html(
                 "ChArUco ground calibration failed",
@@ -1642,12 +1795,18 @@ class CalibrationPanel:
                 ransac_threshold_m=float(self.ransac_threshold_m.value),
             )
             calibration = merge_and_save_calibration(intrinsics, homography, output_path)
+            quality_status = self._update_homography_quality(calibration)
             message = (
                 f"Saved {_display_path(self.project_root, output_path)}. "
                 f"Mean residual: {calibration['ground_marker_mean_residual_m']:.3f} m; "
-                f"max residual: {calibration['ground_marker_max_residual_m']:.3f} m."
+                f"max residual: {calibration['ground_marker_max_residual_m']:.3f} m. "
+                f"Quality: {quality_status.upper()}."
             )
-            self.homography_status.object = _status_html("Complete", message, kind="success")
+            self.homography_status.object = _status_html(
+                "Complete",
+                message,
+                kind=_quality_status_kind(quality_status),
+            )
         except Exception as exc:
             self.homography_status.object = _status_html(
                 "Ground calibration failed",

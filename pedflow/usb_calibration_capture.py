@@ -6,10 +6,13 @@ import hashlib
 import json
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
+
+from .serial_protocol import UNKNOWN_FIRMWARE_VERSION, firmware_version_from_status_line
 
 CALIBRATION_CAPTURE_COMMAND = "CALIB_CAPTURE"
 IMAGE_BEGIN_PREFIX = "#calibration_image_begin"
@@ -32,9 +35,11 @@ class SerialLike(Protocol):
 class UsbCalibrationCapture:
     image_path: Path
     metadata_path: Path
+    started_utc: str
     captured_utc: str
     jpeg_byte_count: int
     image_sha256: str
+    firmware_version: str
 
 
 def metadata_path_for(image_path: Path) -> Path:
@@ -57,6 +62,7 @@ def decode_calibration_image_payload(payload: str) -> bytes:
 def request_calibration_image(
     device: SerialLike,
     timeout_s: float = DEFAULT_CAPTURE_TIMEOUT_S,
+    status_handler: Callable[[str], None] | None = None,
 ) -> bytes:
     deadline = time.monotonic() + float(timeout_s)
     device.write(f"{CALIBRATION_CAPTURE_COMMAND}\n".encode("ascii"))
@@ -65,6 +71,8 @@ def request_calibration_image(
     expected_payload_length: int | None = None
     while True:
         line = _read_serial_line(device, deadline, "calibration image header")
+        if line.startswith("#") and status_handler is not None:
+            status_handler(line)
         if line.startswith(CAPTURE_ERROR_PREFIX):
             raise RuntimeError(line)
         if line.startswith(IMAGE_BEGIN_PREFIX):
@@ -96,6 +104,9 @@ def capture_usb_calibration_photos(
     interval_s: float = 1.0,
     settle_delay_s: float = 2.0,
     timeout_s: float = DEFAULT_CAPTURE_TIMEOUT_S,
+    firmware_version: str = UNKNOWN_FIRMWARE_VERSION,
+    calibration_path: str | Path | None = None,
+    settings: dict | None = None,
 ) -> list[UsbCalibrationCapture]:
     import serial
 
@@ -106,6 +117,13 @@ def capture_usb_calibration_photos(
     output_path.mkdir(parents=True, exist_ok=True)
     safe_basename = _safe_basename(basename)
     captures: list[UsbCalibrationCapture] = []
+    current_firmware_version = firmware_version or UNKNOWN_FIRMWARE_VERSION
+
+    def handle_status(line: str) -> None:
+        nonlocal current_firmware_version
+        detected_version = firmware_version_from_status_line(line)
+        if detected_version is not None:
+            current_firmware_version = detected_version
 
     with serial.Serial(str(port).strip(), int(baud), timeout=0.5) as device:
         if settle_delay_s > 0:
@@ -115,7 +133,12 @@ def capture_usb_calibration_photos(
             if hasattr(device, "reset_input_buffer"):
                 device.reset_input_buffer()
 
-            jpeg = request_calibration_image(device, timeout_s=timeout_s)
+            started_at = datetime.now(UTC)
+            jpeg = request_calibration_image(
+                device,
+                timeout_s=timeout_s,
+                status_handler=handle_status,
+            )
             captured_at = datetime.now(UTC)
             captures.append(
                 _write_capture(
@@ -123,10 +146,15 @@ def capture_usb_calibration_photos(
                     basename=safe_basename,
                     index=index,
                     total_count=int(count),
+                    started_at=started_at,
                     captured_at=captured_at,
                     jpeg=jpeg,
                     port=str(port).strip(),
                     baud=int(baud),
+                    timeout_s=float(timeout_s),
+                    firmware_version=current_firmware_version,
+                    calibration_path=calibration_path,
+                    settings=settings,
                 )
             )
 
@@ -187,24 +215,49 @@ def _write_capture(
     basename: str,
     index: int,
     total_count: int,
+    started_at: datetime,
     captured_at: datetime,
     jpeg: bytes,
     port: str,
     baud: int,
+    timeout_s: float = DEFAULT_CAPTURE_TIMEOUT_S,
+    firmware_version: str = UNKNOWN_FIRMWARE_VERSION,
+    calibration_path: str | Path | None = None,
+    settings: dict | None = None,
 ) -> UsbCalibrationCapture:
     image_path = _unique_capture_path(output_dir, basename, index, total_count, captured_at)
     image_path.write_bytes(jpeg)
 
+    started_utc = started_at.isoformat()
     captured_utc = captured_at.isoformat()
     image_sha256 = hashlib.sha256(jpeg).hexdigest()
     metadata_path = metadata_path_for(image_path)
-    metadata = {
-        "capture_utc": captured_utc,
+    capture_settings = {
         "transport": "usb_serial",
         "firmware_command": CALIBRATION_CAPTURE_COMMAND,
         "port": port,
         "baud": int(baud),
+        "basename": basename,
+        "index": int(index),
+        "total_count": int(total_count),
+        "timeout_s": float(timeout_s),
+    }
+    if settings:
+        capture_settings.update(settings)
+    metadata = {
+        "schema_version": 1,
+        "session_type": "calibration_image_capture",
+        "start_utc": started_utc,
+        "end_utc": captured_utc,
+        "capture_utc": captured_utc,
+        "firmware_version": firmware_version or UNKNOWN_FIRMWARE_VERSION,
+        "calibration_json_path": str(calibration_path) if calibration_path is not None else None,
+        "settings": capture_settings,
         "output_path": str(image_path),
+        "output_files": {
+            "calibration_image": str(image_path),
+            "metadata_json": str(metadata_path),
+        },
         "jpeg_byte_count": len(jpeg),
         "image_sha256": image_sha256,
         "privacy_note": (
@@ -219,9 +272,11 @@ def _write_capture(
     return UsbCalibrationCapture(
         image_path=image_path,
         metadata_path=metadata_path,
+        started_utc=started_utc,
         captured_utc=captured_utc,
         jpeg_byte_count=len(jpeg),
         image_sha256=image_sha256,
+        firmware_version=firmware_version or UNKNOWN_FIRMWARE_VERSION,
     )
 
 

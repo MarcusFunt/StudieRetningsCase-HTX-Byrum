@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from scripts.capture_serial import _metadata_path_for, parse_serial_csv_line, validate_csv_row
+from scripts.capture_serial import (
+    _metadata_path_for,
+    firmware_version_from_status_line,
+    parse_serial_csv_line,
+    validate_csv_row,
+)
 
 
 def test_serial_parser_ignores_privacy_safe_comment_lines():
@@ -32,6 +37,15 @@ def test_capture_metadata_path_uses_json_sidecar():
     assert _metadata_path_for(Path("data/detections/session.csv")) == Path(
         "data/detections/session.metadata.json"
     )
+
+
+def test_firmware_version_parser_accepts_explicit_status_and_udp_heartbeat():
+    assert firmware_version_from_status_line("#status,firmware_version,0.1.0") == "0.1.0"
+    assert (
+        firmware_version_from_status_line("#status,udp_heartbeat,1,0,10,9,1,0.1.0")
+        == "0.1.0"
+    )
+    assert firmware_version_from_status_line("#status,wifi_ap_ready") is None
 
 
 def test_capture_serial_script_help_runs_from_repo_root():

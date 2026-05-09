@@ -10,6 +10,7 @@
 
 namespace {
 constexpr unsigned long SERIAL_BAUD = 115200;
+constexpr const char PEDFLOW_FIRMWARE_VERSION[] = "0.1.0";
 constexpr unsigned long INFERENCE_INTERVAL_MS = 100;
 constexpr unsigned long ERROR_LOG_INTERVAL_MS = 5000;
 constexpr unsigned long SSCMA_RESPONSE_TIMEOUT_MS = 1000;
@@ -281,6 +282,7 @@ void printBootSummaryUsbOnly()
     return;
   }
 
+  printUsbOnlyStatusValue("status", "firmware_version", PEDFLOW_FIRMWARE_VERSION);
   printUsbOnlyStatus("status", udpReady ? "wifi_ap_ready" : "wifi_ap_not_ready");
   printUsbOnlyStatus("status", aiReady ? "ai_ready" : "ai_not_ready");
   if (aiId[0] != '\0') {
@@ -338,6 +340,7 @@ void startWifiAccessPoint()
   }
 
   udpReady = true;
+  printStatusValue("status", "firmware_version", PEDFLOW_FIRMWARE_VERSION);
   printStatus("status", "wifi_ap_ready");
   snprintf(
       wifiApDetails,
@@ -901,6 +904,7 @@ void captureCalibrationImageUsbOnly()
     return;
   }
 
+  printUsbOnlyStatusValue("status", "firmware_version", PEDFLOW_FIRMWARE_VERSION);
   printUsbOnlyStatus("status", "calibration_capture_started");
 
   char error[STATUS_BUFFER_SIZE] = "";
@@ -972,6 +976,7 @@ void captureCalibrationImageUsbOnly()
 
 void printModuleInfoUsbOnly()
 {
+  printUsbOnlyStatusValue("status", "firmware_version", PEDFLOW_FIRMWARE_VERSION);
   printUsbOnlyStatus("status", aiReady ? "ai_ready" : "ai_not_ready");
   char line[STATUS_BUFFER_SIZE];
   snprintf(
@@ -1076,12 +1081,13 @@ void sendUdpHeartbeat()
   snprintf(
       line,
       sizeof(line),
-      "#status,udp_heartbeat,%lu,%u,%lu,%lu,%lu",
+      "#status,udp_heartbeat,%lu,%u,%lu,%lu,%lu,%s",
       static_cast<unsigned long>(udpHeartbeatCount++),
       static_cast<unsigned int>(WiFi.softAPgetStationNum()),
       static_cast<unsigned long>(udpPacketAttemptCount),
       static_cast<unsigned long>(udpPacketSuccessCount),
-      static_cast<unsigned long>(udpPacketFailureCount));
+      static_cast<unsigned long>(udpPacketFailureCount),
+      PEDFLOW_FIRMWARE_VERSION);
   sendUdpLine(line);
 }
 

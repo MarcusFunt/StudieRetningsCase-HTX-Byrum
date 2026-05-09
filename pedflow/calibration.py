@@ -219,6 +219,145 @@ def _reprojection_rms_error(
     return float(np.sqrt(np.mean(np.sum(residuals * residuals, axis=1))))
 
 
+def _status_from_fail_warn(failed: bool, warned: bool) -> str:
+    if failed:
+        return "fail"
+    if warned:
+        return "warn"
+    return "pass"
+
+
+def intrinsics_quality_report(calibration: dict) -> dict:
+    """Return a compact pass/warn/fail report for camera intrinsics calibration."""
+
+    rms = _optional_float(calibration.get("rms_reprojection_error_px"))
+    per_image_errors = [
+        float(value)
+        for value in calibration.get("per_image_reprojection_error_px", [])
+        if np.isfinite(float(value))
+    ]
+    skipped_count = int(calibration.get("skipped_image_count", 0))
+    used_count = len(calibration.get("used_images", []))
+    max_per_image = max(per_image_errors) if per_image_errors else None
+    mean_per_image = float(np.mean(per_image_errors)) if per_image_errors else None
+
+    issues: list[str] = []
+    failed = False
+    warned = False
+    if used_count < 3:
+        failed = True
+        issues.append("At least 3 usable calibration images are required.")
+    if rms is None:
+        failed = True
+        issues.append("RMS reprojection error is missing.")
+    elif rms > 2.0:
+        failed = True
+        issues.append("RMS reprojection error is above 2.0 px.")
+    elif rms > 1.0:
+        warned = True
+        issues.append("RMS reprojection error is above 1.0 px.")
+    if max_per_image is not None and max_per_image > 4.0:
+        failed = True
+        issues.append("At least one image has reprojection error above 4.0 px.")
+    elif max_per_image is not None and max_per_image > 2.0:
+        warned = True
+        issues.append("At least one image has reprojection error above 2.0 px.")
+    if skipped_count > 0:
+        warned = True
+        issues.append(f"{skipped_count} image(s) were skipped.")
+
+    return {
+        "status": _status_from_fail_warn(failed, warned),
+        "rms_reprojection_error_px": rms,
+        "max_per_image_reprojection_error_px": max_per_image,
+        "mean_per_image_reprojection_error_px": mean_per_image,
+        "used_image_count": used_count,
+        "skipped_image_count": skipped_count,
+        "issues": issues,
+    }
+
+
+def homography_quality_report(calibration: dict) -> dict:
+    """Return a compact pass/warn/fail report for ground homography calibration."""
+
+    mean_residual = _optional_float(calibration.get("ground_marker_mean_residual_m"))
+    max_residual = _optional_float(calibration.get("ground_marker_max_residual_m"))
+    marker_count = int(calibration.get("ground_marker_count", 0))
+    inliers = calibration.get("ground_marker_inliers", [])
+    inlier_ratio = (
+        float(np.mean(np.asarray(inliers, dtype=bool))) if len(inliers) > 0 else None
+    )
+
+    issues: list[str] = []
+    failed = False
+    warned = False
+    if marker_count < 4:
+        failed = True
+        issues.append("At least 4 ground markers are required.")
+    if mean_residual is None or max_residual is None:
+        failed = True
+        issues.append("Ground marker residuals are missing.")
+    else:
+        if mean_residual > 0.10:
+            failed = True
+            issues.append("Mean homography residual is above 0.10 m.")
+        elif mean_residual > 0.03:
+            warned = True
+            issues.append("Mean homography residual is above 0.03 m.")
+        if max_residual > 0.25:
+            failed = True
+            issues.append("Max homography residual is above 0.25 m.")
+        elif max_residual > 0.10:
+            warned = True
+            issues.append("Max homography residual is above 0.10 m.")
+    if inlier_ratio is not None:
+        if inlier_ratio < 0.60:
+            failed = True
+            issues.append("Less than 60% of ground markers are RANSAC inliers.")
+        elif inlier_ratio < 0.80:
+            warned = True
+            issues.append("Less than 80% of ground markers are RANSAC inliers.")
+
+    return {
+        "status": _status_from_fail_warn(failed, warned),
+        "ground_marker_count": marker_count,
+        "ground_marker_inlier_ratio": inlier_ratio,
+        "ground_marker_mean_residual_m": mean_residual,
+        "ground_marker_max_residual_m": max_residual,
+        "issues": issues,
+    }
+
+
+def calibration_quality_report(calibration: dict) -> dict:
+    intrinsics = intrinsics_quality_report(calibration) if "K" in calibration else None
+    homography = (
+        homography_quality_report(calibration)
+        if "H_image_to_ground" in calibration
+        else None
+    )
+    statuses = [
+        report["status"]
+        for report in (intrinsics, homography)
+        if report is not None
+    ]
+    overall = "fail" if "fail" in statuses else "warn" if "warn" in statuses else "pass"
+    return {
+        "status": overall,
+        "intrinsics": intrinsics,
+        "homography": homography,
+    }
+
+
+def _optional_float(value: object) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(parsed):
+        return None
+    return parsed
+
+
 def calibrate_camera_from_charuco(
     image_paths: Iterable[str | Path],
     board_metadata_path: str | Path,
@@ -297,7 +436,7 @@ def calibrate_camera_from_charuco(
             _reprojection_rms_error(obj_points, img_points, rvec, tvec, camera_matrix, dist_coeffs)
         )
 
-    return {
+    result = {
         "image_width": int(image_size[0]),
         "image_height": int(image_size[1]),
         "K": camera_matrix.tolist(),
@@ -331,6 +470,8 @@ def calibrate_camera_from_charuco(
             "Delete calibration images after this file has been verified."
         ),
     }
+    result["intrinsics_quality"] = intrinsics_quality_report(result)
+    return result
 
 
 def checkerboard_object_points(pattern_size: tuple[int, int], square_size_m: float) -> np.ndarray:
@@ -415,7 +556,7 @@ def calibrate_camera_from_checkerboard(
             _reprojection_rms_error(obj_points, img_points, rvec, tvec, camera_matrix, dist_coeffs)
         )
 
-    return {
+    result = {
         "image_width": int(image_size[0]),
         "image_height": int(image_size[1]),
         "K": camera_matrix.tolist(),
@@ -432,6 +573,8 @@ def calibrate_camera_from_checkerboard(
             "Delete calibration images after this file has been verified."
         ),
     }
+    result["intrinsics_quality"] = intrinsics_quality_report(result)
+    return result
 
 
 def read_marker_csv(path: str | Path) -> pd.DataFrame:
@@ -575,7 +718,7 @@ def compute_ground_homography(
         else [True] * len(marker_points)
     )
 
-    return {
+    result = {
         "H_image_to_ground": homography.tolist(),
         "ground_marker_count": len(marker_points),
         "ground_marker_inliers": mask,
@@ -583,6 +726,8 @@ def compute_ground_homography(
         "ground_marker_mean_residual_m": float(np.mean(residuals)),
         "ground_marker_max_residual_m": float(np.max(residuals)),
     }
+    result["homography_quality"] = homography_quality_report(result)
+    return result
 
 
 def compute_ground_homography_from_charuco(
@@ -635,5 +780,6 @@ def merge_and_save_calibration(
     output_path: str | Path,
 ) -> dict:
     calibration = {**intrinsic_calibration, **homography_calibration}
+    calibration["calibration_quality"] = calibration_quality_report(calibration)
     save_calibration(calibration, output_path)
     return calibration

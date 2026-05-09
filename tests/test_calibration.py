@@ -11,7 +11,10 @@ from pedflow.calibration import (
     _safe_output_basename,
     calibrate_camera_from_charuco,
     calibrate_camera_from_checkerboard,
+    calibration_quality_report,
     generate_charuco_board,
+    homography_quality_report,
+    intrinsics_quality_report,
     read_marker_csv,
 )
 
@@ -107,6 +110,7 @@ def test_charuco_calibration_ignores_unusable_image_resolution(tmp_path, monkeyp
     assert result["image_width"] == 30
     assert result["skipped_image_count"] == 1
     assert len(result["used_images"]) == 3
+    assert result["intrinsics_quality"]["status"] == "warn"
 
 
 def test_reprojection_error_reports_rms_pixel_error():
@@ -151,6 +155,33 @@ def test_reprojection_error_reports_rms_pixel_error():
     )
 
     assert error == pytest.approx(5.0)
+
+
+def test_calibration_quality_reports_include_status_and_issues():
+    intrinsics = {
+        "K": np.eye(3).tolist(),
+        "rms_reprojection_error_px": 0.45,
+        "per_image_reprojection_error_px": [0.4, 0.5, 0.45],
+        "used_images": ["a.png", "b.png", "c.png"],
+        "skipped_image_count": 0,
+    }
+    homography = {
+        "H_image_to_ground": np.eye(3).tolist(),
+        "ground_marker_count": 4,
+        "ground_marker_mean_residual_m": 0.02,
+        "ground_marker_max_residual_m": 0.05,
+        "ground_marker_inliers": [True, True, True, True],
+    }
+
+    assert intrinsics_quality_report(intrinsics)["status"] == "pass"
+    assert homography_quality_report(homography)["status"] == "pass"
+    merged = intrinsics | homography
+    assert calibration_quality_report(merged)["status"] == "pass"
+
+    intrinsics["skipped_image_count"] = 2
+    report = intrinsics_quality_report(intrinsics)
+    assert report["status"] == "warn"
+    assert "2 image(s) were skipped." in report["issues"]
 
 
 @pytest.mark.parametrize("basename", ["../escape", "nested/name", r"nested\name", "bad name"])

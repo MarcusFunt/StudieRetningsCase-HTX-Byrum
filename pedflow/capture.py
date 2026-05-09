@@ -9,7 +9,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .serial_protocol import CSV_COLUMNS, metadata_path_for, parse_serial_csv_line, validate_csv_row
+from .serial_protocol import (
+    CSV_COLUMNS,
+    UNKNOWN_FIRMWARE_VERSION,
+    firmware_version_from_status_line,
+    metadata_path_for,
+    parse_serial_csv_line,
+    validate_csv_row,
+)
 
 DEFAULT_BIND_HOST = "0.0.0.0"
 DEFAULT_UDP_PORT = 4210
@@ -37,9 +44,15 @@ def parse_udp_payload_lines(payload: bytes) -> list[str]:
 
 
 class _CsvCaptureWorker:
-    def __init__(self, output_path: str | Path, max_log_lines: int = 300) -> None:
+    def __init__(
+        self,
+        output_path: str | Path,
+        max_log_lines: int = 300,
+        calibration_path: str | Path | None = None,
+    ) -> None:
         self.output_path = Path(output_path)
         self.metadata_path = metadata_path_for(self.output_path)
+        self.calibration_path = Path(calibration_path) if calibration_path is not None else None
         self._max_log_lines = int(max_log_lines)
         self._log_lines: deque[str] = deque(maxlen=self._max_log_lines)
         self._lock = threading.Lock()
@@ -53,6 +66,7 @@ class _CsvCaptureWorker:
         self._error: str | None = None
         self._started_at: datetime | None = None
         self._ended_at: datetime | None = None
+        self._firmware_version = UNKNOWN_FIRMWARE_VERSION
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -67,6 +81,7 @@ class _CsvCaptureWorker:
             self._error = None
             self._started_at = datetime.now(UTC)
             self._ended_at = None
+            self._firmware_version = UNKNOWN_FIRMWARE_VERSION
             self._log_lines.clear()
         self._stop_event.clear()
         self._thread = threading.Thread(
@@ -123,9 +138,17 @@ class _CsvCaptureWorker:
     def _metadata(self) -> dict:
         snapshot = self.snapshot()
         return {
+            "schema_version": 1,
+            "session_type": "detection_capture",
             "start_utc": snapshot.started_utc,
             "end_utc": snapshot.ended_utc,
+            "firmware_version": self._firmware_version,
+            "calibration_json_path": str(self.calibration_path) if self.calibration_path else None,
             "output_path": str(snapshot.output_path),
+            "output_files": {
+                "detections_csv": str(snapshot.output_path),
+                "metadata_json": str(snapshot.metadata_path),
+            },
             "rows_written": snapshot.rows_written,
             "skipped_row_count": snapshot.skipped_row_count,
             "comment_row_count": snapshot.comment_row_count,
@@ -155,6 +178,13 @@ class _CsvCaptureWorker:
         with self._lock:
             self._comment_row_count += 1
 
+    def _handle_status_comment(self, line: str) -> None:
+        version = firmware_version_from_status_line(line)
+        if version is None:
+            return
+        with self._lock:
+            self._firmware_version = version
+
     def _increment_source(self, source: str) -> None:
         with self._lock:
             self._source_counts[source] = self._source_counts.get(source, 0) + 1
@@ -167,8 +197,13 @@ class SerialCsvCaptureWorker(_CsvCaptureWorker):
         output_path: str | Path,
         baud: int = 115200,
         max_log_lines: int = 300,
+        calibration_path: str | Path | None = None,
     ) -> None:
-        super().__init__(output_path, max_log_lines=max_log_lines)
+        super().__init__(
+            output_path,
+            max_log_lines=max_log_lines,
+            calibration_path=calibration_path,
+        )
         self.port = str(port).strip()
         self.baud = int(baud)
 
@@ -193,6 +228,7 @@ class SerialCsvCaptureWorker(_CsvCaptureWorker):
                 if not line:
                     continue
                 if line.startswith("#"):
+                    self._handle_status_comment(line)
                     self._increment_comment()
                     self._log(line)
                     continue
@@ -234,9 +270,11 @@ class SerialCsvCaptureWorker(_CsvCaptureWorker):
         metadata = super()._metadata()
         metadata.update(
             {
-                "transport": "usb_serial",
-                "port": self.port,
-                "baud": self.baud,
+                "settings": {
+                    "transport": "usb_serial",
+                    "port": self.port,
+                    "baud": self.baud,
+                },
             }
         )
         return metadata
@@ -250,8 +288,13 @@ class UdpCsvCaptureWorker(_CsvCaptureWorker):
         port: int = DEFAULT_UDP_PORT,
         buffer_size: int = DEFAULT_BUFFER_SIZE,
         max_log_lines: int = 300,
+        calibration_path: str | Path | None = None,
     ) -> None:
-        super().__init__(output_path, max_log_lines=max_log_lines)
+        super().__init__(
+            output_path,
+            max_log_lines=max_log_lines,
+            calibration_path=calibration_path,
+        )
         self.host = str(host).strip()
         self.port = int(port)
         self.buffer_size = int(buffer_size)
@@ -282,6 +325,7 @@ class UdpCsvCaptureWorker(_CsvCaptureWorker):
                 self._increment_source(source)
                 for line in parse_udp_payload_lines(payload):
                     if line.startswith("#"):
+                        self._handle_status_comment(line)
                         self._increment_comment()
                         self._log(f"{source} {line}")
                         continue
@@ -312,9 +356,12 @@ class UdpCsvCaptureWorker(_CsvCaptureWorker):
         metadata = super()._metadata()
         metadata.update(
             {
-                "transport": "udp_wifi_ap",
-                "bind_host": self.host,
-                "port": self.port,
+                "settings": {
+                    "transport": "udp_wifi_ap",
+                    "bind_host": self.host,
+                    "port": self.port,
+                    "buffer_size": self.buffer_size,
+                },
                 "source_counts": self.snapshot().source_counts,
             }
         )

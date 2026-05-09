@@ -69,6 +69,7 @@ python scripts/capture_wifi.py --output data/detections/session.csv
 ```
 
 Windows may ask whether Python can receive network traffic. Allow it on the private network for the sensor feed.
+Each capture writes a `*.metadata.json` sidecar with start/end time, firmware version when reported by the device, capture settings, calibration JSON path if supplied, row counts, and output file paths.
 
 USB serial capture is still available for debugging:
 
@@ -139,8 +140,8 @@ Start the local Panel dashboard:
 
 The dashboard is the supported workflow. It has four top-level tabs:
 
-- `Analysis`: pick discovered detection sessions and calibration files from dropdowns, upload files only when needed, tune advanced settings, view paths and heatmaps, inspect tables, and optionally write processed CSV outputs.
-- `Calibration`: generate the printable ChArUco board, capture intrinsics photos and ground marker photos into separate folders, calibrate camera intrinsics, and build ground homography either automatically from a flat ChArUco ground photo or from `data/ground_markers.csv`.
+- `Analysis`: pick discovered detection sessions and calibration files from dropdowns, upload files only when needed, tune advanced settings, view paths and heatmaps, inspect tables, and optionally write processed CSV outputs with PNG/HTML QA plots and an `analysis_manifest.json`.
+- `Calibration`: generate the printable ChArUco board, capture intrinsics photos and ground marker photos into separate folders, calibrate camera intrinsics, review RMS/per-image/skipped-image quality, and build ground homography either automatically from a flat ChArUco ground photo or from `data/ground_markers.csv` with residual quality checks.
 - `USB Debug`: pick a detected USB serial port, start local testing, and view live boxes, contact points, tracks, and PedPy outputs.
 - `Operations`: run the repo scripts from the GUI, including Wi-Fi/USB CSV capture, USB-only calibration image capture, Wi-Fi secret generation, ChArUco board generation, and logged PedPy/OpenCV analysis runs.
 
@@ -168,6 +169,8 @@ The analysis exports interpretable sub-metrics instead of one fake quality score
 - stop/dwell map
 - bottleneck index
 - detour ratio and direction-change summaries
+
+When outputs are enabled, the same path, density, speed, dwell, and bottleneck views are saved next to the CSV files as PNG/HTML QA exports.
 
 Direction changes are not treated as proof that a street is good or bad. They can also indicate obstacles, confusion, crowding, or tracking noise.
 

@@ -12,7 +12,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from pedflow.serial_protocol import CSV_COLUMNS, parse_serial_csv_line, validate_csv_row
+from pedflow.serial_protocol import (
+    CSV_COLUMNS,
+    UNKNOWN_FIRMWARE_VERSION,
+    firmware_version_from_status_line,
+    parse_serial_csv_line,
+    validate_csv_row,
+)
 from pedflow.serial_protocol import metadata_path_for as _metadata_path_for
 
 DEFAULT_BIND_HOST = "0.0.0.0"
@@ -33,6 +39,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default=DEFAULT_BIND_HOST, help="Local bind host")
     parser.add_argument("--port", type=int, default=DEFAULT_UDP_PORT, help="UDP port")
     parser.add_argument("--buffer-size", type=int, default=DEFAULT_BUFFER_SIZE, help="UDP receive buffer")
+    parser.add_argument(
+        "--calibration",
+        default=None,
+        help="Optional calibration JSON path to record in capture metadata",
+    )
     return parser.parse_args()
 
 
@@ -47,6 +58,7 @@ def main() -> int:
     skipped_row_count = 0
     comment_row_count = 0
     source_counts: dict[str, int] = {}
+    firmware_version = UNKNOWN_FIRMWARE_VERSION
 
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as receiver, output_path.open(
         "w",
@@ -73,6 +85,9 @@ def main() -> int:
 
                 for line in parse_udp_payload_lines(payload):
                     if line.startswith("#"):
+                        detected_version = firmware_version_from_status_line(line)
+                        if detected_version is not None:
+                            firmware_version = detected_version
                         comment_row_count += 1
                         print(f"{source} {line}")
                         continue
@@ -100,12 +115,23 @@ def main() -> int:
 
     end_time = datetime.now(UTC)
     metadata = {
+        "schema_version": 1,
+        "session_type": "detection_capture",
         "start_utc": start_time.isoformat(),
         "end_utc": end_time.isoformat(),
-        "transport": "udp_wifi_ap",
-        "bind_host": args.host,
-        "port": int(args.port),
+        "firmware_version": firmware_version,
+        "calibration_json_path": str(args.calibration) if args.calibration else None,
+        "settings": {
+            "transport": "udp_wifi_ap",
+            "bind_host": args.host,
+            "port": int(args.port),
+            "buffer_size": int(args.buffer_size),
+        },
         "output_path": str(output_path),
+        "output_files": {
+            "detections_csv": str(output_path),
+            "metadata_json": str(metadata_path),
+        },
         "rows_written": rows_written,
         "skipped_row_count": skipped_row_count,
         "comment_row_count": comment_row_count,
