@@ -91,11 +91,16 @@ if (-not (Test-Path $buildDir)) {
     throw "Build directory not found: $buildDir"
 }
 
+$make = if (Get-Command make -ErrorAction SilentlyContinue) { "make" }
+        elseif (Get-Command mingw32-make -ErrorAction SilentlyContinue) { "mingw32-make" }
+        else { throw "Neither 'make' nor 'mingw32-make' found on PATH. Install the Arm GNU Toolchain or MinGW/MSYS2." }
+Write-Host "Using: $make"
+
 Push-Location $buildDir
 try {
-    make clean
+    & $make clean
     if ($LASTEXITCODE -ne 0) { throw "make clean failed" }
-    make
+    & $make
     if ($LASTEXITCODE -ne 0) { throw "make failed" }
 } finally {
     Pop-Location
