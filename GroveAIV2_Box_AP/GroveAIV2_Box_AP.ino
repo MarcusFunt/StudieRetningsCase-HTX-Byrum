@@ -1,7 +1,6 @@
 #include <ArduinoJson.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
-#include <Wire.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -15,7 +14,7 @@ constexpr unsigned long INFERENCE_INTERVAL_MS = 100;
 constexpr unsigned long ERROR_LOG_INTERVAL_MS = 5000;
 constexpr unsigned long SSCMA_RESPONSE_TIMEOUT_MS = 1000;
 constexpr unsigned long SSCMA_INVOKE_EVENT_TIMEOUT_MS = 5000;
-constexpr unsigned long SSCMA_IMAGE_EVENT_TIMEOUT_MS = 15000;
+constexpr unsigned long SSCMA_IMAGE_EVENT_TIMEOUT_MS = 60000;
 constexpr unsigned long AI_INIT_SETTLE_MS = 1500;
 constexpr unsigned long AI_INIT_RETRY_INTERVAL_MS = 3000;
 constexpr unsigned long UDP_HEARTBEAT_INTERVAL_MS = 1000;
@@ -23,14 +22,14 @@ constexpr uint16_t WIFI_UDP_PORT = 4210;
 constexpr uint8_t WIFI_AP_CHANNEL = 6;
 constexpr bool WIFI_AP_HIDDEN = false;
 constexpr uint8_t WIFI_AP_MAX_CLIENTS = 2;
-constexpr uint8_t SSCMA_I2C_ADDRESS = 0x62;
-constexpr uint32_t SSCMA_I2C_CLOCK = 100000;
-constexpr uint8_t SSCMA_I2C_WAIT_DELAY_MS = 2;
-constexpr uint8_t SSCMA_I2C_RECOVERY_CLOCKS = 18;
+constexpr unsigned long SSCMA_UART_BAUD = 921600;
+constexpr int8_t SSCMA_UART_RX_PIN = D7;
+constexpr int8_t SSCMA_UART_TX_PIN = D6;
+constexpr uint8_t SSCMA_UART_WAIT_DELAY_MS = 1;
+constexpr size_t SSCMA_UART_RX_BUFFER_SIZE = 8192;
 constexpr int32_t SSCMA_RESET_PIN = D3;
 constexpr unsigned long SSCMA_RESET_LOW_MS = 50;
 constexpr unsigned long SSCMA_RESET_SETTLE_MS = 1500;
-constexpr uint8_t SSCMA_MAX_PAYLOAD_LEN = 250;
 constexpr size_t STATUS_BUFFER_SIZE = 120;
 constexpr size_t INVOKE_ERROR_BUFFER_SIZE = 192;
 constexpr size_t SSCMA_ERROR_DETAIL_BUFFER_SIZE = 80;
@@ -48,17 +47,20 @@ constexpr const char USB_RAW_AT_COMMAND_PREFIX[] = "AT:";
 constexpr const char CALIBRATION_IMAGE_BEGIN_PREFIX[] = "#calibration_image_begin";
 constexpr const char CALIBRATION_IMAGE_END[] = "#calibration_image_end";
 constexpr const char SSCMA_INVOKE_DETECTIONS_COMMAND[] = "AT+INVOKE=1,0,1\r\n";
-constexpr const char SSCMA_SAMPLE_IMAGE_COMMAND[] = "AT+SAMPLE=1\r\n";
+constexpr const char SSCMA_CALIB_SAMPLE_IMAGE_COMMAND[] = "AT+CALIBSAMPLE=1\r\n";
+constexpr const char SSCMA_SENSOR_QUERY_COMMAND[] = "AT+SENSOR?\r\n";
 constexpr const char SSCMA_ID_COMMAND[] = "AT+ID?\r\n";
 constexpr const char SSCMA_NAME_COMMAND[] = "AT+NAME?\r\n";
 constexpr const char SSCMA_INFO_COMMAND[] = "AT+INFO?\r\n";
 constexpr const char JSON_RESPONSE_PREFIX[] = "\r{";
 constexpr const char JSON_RESPONSE_SUFFIX[] = "}\n";
-
-constexpr uint8_t FEATURE_TRANSPORT = 0x10;
-constexpr uint8_t FEATURE_TRANSPORT_CMD_READ = 0x01;
-constexpr uint8_t FEATURE_TRANSPORT_CMD_WRITE = 0x02;
-constexpr uint8_t FEATURE_TRANSPORT_CMD_AVAILABLE = 0x03;
+constexpr int SSCMA_SENSOR_OPT_240X240 = 0;
+constexpr int SSCMA_SENSOR_OPT_480X480 = 1;
+constexpr int SSCMA_SENSOR_OPT_640X480 = 2;
+constexpr int SSCMA_SENSOR_OPT_640X480_CALIBRATION_HQ = 5;
+constexpr int SSCMA_CALIBRATION_SENSOR_OPT_ID = SSCMA_SENSOR_OPT_640X480_CALIBRATION_HQ;
+constexpr const char SSCMA_CALIBRATION_SENSOR_DETAIL[] = "640x480 Calibration HQ";
+constexpr const char SSCMA_CALIBRATION_TRANSPORT_DETAIL[] = "uart_921600";
 
 constexpr int CMD_OK = 0;
 constexpr int CMD_TYPE_RESPONSE = 0;
@@ -66,6 +68,7 @@ constexpr int CMD_TYPE_EVENT = 1;
 constexpr int CMD_TYPE_LOG = 2;
 
 WiFiUDP udp;
+HardwareSerial sscmaSerial(1);
 
 const IPAddress WIFI_AP_IP(192, 168, 4, 1);
 const IPAddress WIFI_AP_GATEWAY(192, 168, 4, 1);
@@ -90,10 +93,10 @@ uint32_t udpWriteFailureCount = 0;
 uint32_t udpEndFailureCount = 0;
 uint32_t udpHeartbeatCount = 0;
 bool aiReady = false;
-uint8_t lastSscmaProbeError = 0;
-uint8_t lastSscmaWriteError = 0;
-uint8_t lastSscmaAvailableError = 0;
-uint8_t lastSscmaReadError = 0;
+uint32_t lastSscmaProbeError = 0;
+uint32_t lastSscmaWriteError = 0;
+uint32_t lastSscmaAvailableError = 0;
+uint32_t lastSscmaReadError = 0;
 char aiId[MODULE_TEXT_BUFFER_SIZE] = "";
 char aiName[MODULE_TEXT_BUFFER_SIZE] = "";
 char aiInfo[MODULE_TEXT_BUFFER_SIZE] = "";
@@ -105,6 +108,14 @@ struct RawSscmaMessage {
   char *json = nullptr;
   size_t jsonLength = 0;
   size_t consumeLength = 0;
+};
+
+struct CalibrationSensorState {
+  bool previousKnown = false;
+  bool restoreNeeded = false;
+  bool selected = false;
+  int previousOptId = -1;
+  int requestedOptId = SSCMA_CALIBRATION_SENSOR_OPT_ID;
 };
 
 bool sendUdpPacket(const IPAddress &destination, const char *line)
@@ -211,6 +222,17 @@ void printUsbOnlyStatusValue(const char *level, const char *code, const char *va
   Serial.println(line);
 }
 
+void printUsbOnlyStatusNumber(const char *level, const char *code, unsigned long value)
+{
+  if (!usbDebugActive) {
+    return;
+  }
+
+  char line[STATUS_BUFFER_SIZE];
+  snprintf(line, sizeof(line), "#%s,%s,%lu", level, code, value);
+  Serial.println(line);
+}
+
 void copyText(char *destination, size_t destinationSize, const char *source)
 {
   if (destinationSize == 0) {
@@ -223,39 +245,6 @@ void copyText(char *destination, size_t destinationSize, const char *source)
   }
 
   snprintf(destination, destinationSize, "%s", source);
-}
-
-void releaseI2cLine(uint8_t pin)
-{
-  pinMode(pin, INPUT_PULLUP);
-}
-
-void driveI2cLineLow(uint8_t pin)
-{
-  digitalWrite(pin, LOW);
-  pinMode(pin, OUTPUT);
-}
-
-void recoverSscmaI2cBus()
-{
-  Wire.end();
-  releaseI2cLine(SDA);
-  releaseI2cLine(SCL);
-  delay(5);
-
-  for (uint8_t i = 0; i < SSCMA_I2C_RECOVERY_CLOCKS; ++i) {
-    driveI2cLineLow(SCL);
-    delayMicroseconds(5);
-    releaseI2cLine(SCL);
-    delayMicroseconds(5);
-  }
-
-  driveI2cLineLow(SDA);
-  delayMicroseconds(5);
-  releaseI2cLine(SCL);
-  delayMicroseconds(5);
-  releaseI2cLine(SDA);
-  delay(5);
 }
 
 void resetSscmaModule()
@@ -347,98 +336,34 @@ void startWifiAccessPoint()
   emitTelemetryLine(wifiApDetails);
 }
 
-bool sscmaWritePacket(const char *data, uint8_t length)
-{
-  Wire.beginTransmission(SSCMA_I2C_ADDRESS);
-  Wire.write(FEATURE_TRANSPORT);
-  Wire.write(FEATURE_TRANSPORT_CMD_WRITE);
-  Wire.write(static_cast<uint8_t>(length >> 8));
-  Wire.write(static_cast<uint8_t>(length & 0xFF));
-  Wire.write(reinterpret_cast<const uint8_t *>(data), length);
-  Wire.write(static_cast<uint8_t>(0));
-  Wire.write(static_cast<uint8_t>(0));
-  lastSscmaWriteError = Wire.endTransmission();
-  return lastSscmaWriteError == 0;
-}
-
 bool sscmaWrite(const char *data, size_t length)
 {
-  size_t offset = 0;
-  while (offset < length) {
-    const uint8_t chunkLength = static_cast<uint8_t>(
-        min(static_cast<size_t>(SSCMA_MAX_PAYLOAD_LEN), length - offset));
-    if (!sscmaWritePacket(data + offset, chunkLength)) {
-      return false;
-    }
-    offset += chunkLength;
-    delay(SSCMA_I2C_WAIT_DELAY_MS);
-  }
-
-  return true;
+  const size_t written = sscmaSerial.write(reinterpret_cast<const uint8_t *>(data), length);
+  sscmaSerial.flush();
+  lastSscmaWriteError = written == length ? 0 : static_cast<uint32_t>(length - written);
+  return written == length;
 }
 
 int sscmaAvailable()
 {
-  uint8_t data[2] = {0, 0};
-
-  delay(SSCMA_I2C_WAIT_DELAY_MS);
-  Wire.beginTransmission(SSCMA_I2C_ADDRESS);
-  Wire.write(FEATURE_TRANSPORT);
-  Wire.write(FEATURE_TRANSPORT_CMD_AVAILABLE);
-  Wire.write(static_cast<uint8_t>(0));
-  Wire.write(static_cast<uint8_t>(0));
-  Wire.write(static_cast<uint8_t>(0));
-  Wire.write(static_cast<uint8_t>(0));
-  lastSscmaAvailableError = Wire.endTransmission();
-  if (lastSscmaAvailableError != 0) {
-    return 0;
-  }
-
-  delay(SSCMA_I2C_WAIT_DELAY_MS);
-  const uint8_t received = Wire.requestFrom(SSCMA_I2C_ADDRESS, static_cast<uint8_t>(2));
-  if (received != 2) {
-    return 0;
-  }
-
-  data[0] = static_cast<uint8_t>(Wire.read());
-  data[1] = static_cast<uint8_t>(Wire.read());
-  return (static_cast<int>(data[0]) << 8) | data[1];
+  const int available = sscmaSerial.available();
+  lastSscmaAvailableError = 0;
+  return available > 0 ? available : 0;
 }
 
 int sscmaRead(char *data, int length)
 {
   int totalRead = 0;
 
-  while (totalRead < length) {
-    const uint8_t chunkLength = static_cast<uint8_t>(
-        min(static_cast<int>(SSCMA_MAX_PAYLOAD_LEN), length - totalRead));
-
-    delay(SSCMA_I2C_WAIT_DELAY_MS);
-    Wire.beginTransmission(SSCMA_I2C_ADDRESS);
-    Wire.write(FEATURE_TRANSPORT);
-    Wire.write(FEATURE_TRANSPORT_CMD_READ);
-    Wire.write(static_cast<uint8_t>(chunkLength >> 8));
-    Wire.write(static_cast<uint8_t>(chunkLength & 0xFF));
-    Wire.write(static_cast<uint8_t>(0));
-    Wire.write(static_cast<uint8_t>(0));
-    lastSscmaReadError = Wire.endTransmission();
-    if (lastSscmaReadError != 0) {
+  while (totalRead < length && sscmaSerial.available() > 0) {
+    const int value = sscmaSerial.read();
+    if (value < 0) {
       break;
     }
-
-    delay(SSCMA_I2C_WAIT_DELAY_MS);
-    const uint8_t requested = Wire.requestFrom(SSCMA_I2C_ADDRESS, chunkLength);
-    int chunkRead = 0;
-    while (Wire.available() > 0 && chunkRead < requested) {
-      data[totalRead++] = static_cast<char>(Wire.read());
-      ++chunkRead;
-    }
-
-    if (chunkRead == 0 || chunkRead < chunkLength) {
-      break;
-    }
+    data[totalRead++] = static_cast<char>(value);
   }
 
+  lastSscmaReadError = 0;
   return totalRead;
 }
 
@@ -464,11 +389,14 @@ void resetSscmaParser()
 
 void flushSscmaInput()
 {
-  int available = sscmaAvailable();
-  while (available > 0) {
-    drainSscmaBytes(available);
-    delay(SSCMA_I2C_WAIT_DELAY_MS);
-    available = sscmaAvailable();
+  unsigned long quietSince = millis();
+  while (millis() - quietSince < 25) {
+    const int available = sscmaAvailable();
+    if (available > 0) {
+      drainSscmaBytes(available);
+      quietSince = millis();
+    }
+    delay(SSCMA_UART_WAIT_DELAY_MS);
   }
   resetSscmaParser();
 }
@@ -572,7 +500,7 @@ bool waitForRawSscmaMessage(
       return true;
     }
 
-    delay(SSCMA_I2C_WAIT_DELAY_MS);
+    delay(SSCMA_UART_WAIT_DELAY_MS);
   }
 
   snprintf(error, errorSize, "timeout");
@@ -636,19 +564,148 @@ bool sendSscmaCommand(const char *command, char *error, size_t errorSize)
   return true;
 }
 
-bool probeSscmaDevice(char *error, size_t errorSize)
+void printUsbOnlySensorStatus(const char *level, const char *code, int optId, const char *detail)
 {
-  Wire.beginTransmission(SSCMA_I2C_ADDRESS);
-  lastSscmaProbeError = Wire.endTransmission();
-  if (lastSscmaProbeError != 0) {
-    snprintf(
-        error,
-        errorSize,
-        "i2c_probe_failed_%u",
-        static_cast<unsigned int>(lastSscmaProbeError));
+  if (!usbDebugActive) {
+    return;
+  }
+
+  char line[STATUS_BUFFER_SIZE];
+  snprintf(line, sizeof(line), "#%s,%s,%d,%s", level, code, optId, detail ? detail : "");
+  Serial.println(line);
+}
+
+bool queryCurrentSensor(JsonDocument &response, char *error, size_t errorSize)
+{
+  response.clear();
+  if (!sendSscmaCommand(SSCMA_SENSOR_QUERY_COMMAND, error, errorSize)) {
     return false;
   }
 
+  return waitForExpectedJson(
+      CMD_TYPE_RESPONSE,
+      "SENSOR?",
+      SSCMA_RESPONSE_TIMEOUT_MS,
+      response,
+      error,
+      errorSize);
+}
+
+bool setSensorOption(int optId, JsonDocument &response, char *error, size_t errorSize)
+{
+  char command[USB_COMMAND_BUFFER_SIZE];
+  snprintf(command, sizeof(command), "AT+SENSOR=1,1,%d\r\n", optId);
+  response.clear();
+  if (!sendSscmaCommand(command, error, errorSize)) {
+    return false;
+  }
+
+  return waitForExpectedJson(
+      CMD_TYPE_RESPONSE,
+      "SENSOR",
+      SSCMA_RESPONSE_TIMEOUT_MS,
+      response,
+      error,
+      errorSize);
+}
+
+CalibrationSensorState selectCalibrationSensorOption()
+{
+  CalibrationSensorState state;
+  printUsbOnlySensorStatus(
+      "status",
+      "calibration_sensor_requested",
+      state.requestedOptId,
+      SSCMA_CALIBRATION_SENSOR_DETAIL);
+
+  char error[STATUS_BUFFER_SIZE] = "";
+  JsonDocument currentSensor;
+  if (!queryCurrentSensor(currentSensor, error, sizeof(error))) {
+    printUsbOnlyStatusValue("error", "calibration_sensor_query_failed", error);
+    return state;
+  }
+
+  state.previousOptId = currentSensor["data"]["opt_id"] | -1;
+  const char *previousDetail = currentSensor["data"]["opt_detail"] | "";
+  state.previousKnown = state.previousOptId >= 0;
+  printUsbOnlySensorStatus(
+      "status",
+      "calibration_sensor_previous",
+      state.previousOptId,
+      previousDetail);
+
+  if (state.previousOptId == state.requestedOptId) {
+    printUsbOnlyStatus("status", "calibration_sensor_restore_not_needed");
+    printUsbOnlySensorStatus(
+        "status",
+        "calibration_sensor_selected",
+        state.previousOptId,
+        previousDetail);
+    state.selected = true;
+    return state;
+  }
+
+  JsonDocument selectedSensor;
+  if (!setSensorOption(state.requestedOptId, selectedSensor, error, sizeof(error))) {
+    printUsbOnlyStatusValue("error", "calibration_sensor_select_failed", error);
+    return state;
+  }
+
+  const int selectedOptId = selectedSensor["data"]["sensor"]["opt_id"] | state.requestedOptId;
+  const char *selectedDetail = selectedSensor["data"]["sensor"]["opt_detail"] | "";
+  printUsbOnlySensorStatus(
+      "status",
+      "calibration_sensor_selected",
+      selectedOptId,
+      selectedDetail);
+  state.restoreNeeded = state.previousKnown;
+  state.selected = true;
+  return state;
+}
+
+void restoreCalibrationSensorOption(const CalibrationSensorState &state)
+{
+  if (!state.restoreNeeded) {
+    return;
+  }
+
+  char error[STATUS_BUFFER_SIZE] = "";
+  JsonDocument restoredSensor;
+  if (!setSensorOption(state.previousOptId, restoredSensor, error, sizeof(error))) {
+    printUsbOnlyStatusValue("error", "calibration_sensor_restore_failed", error);
+    return;
+  }
+
+  const int restoredOptId = restoredSensor["data"]["sensor"]["opt_id"] | state.previousOptId;
+  const char *restoredDetail = restoredSensor["data"]["sensor"]["opt_detail"] | "";
+  printUsbOnlySensorStatus(
+      "status",
+      "calibration_sensor_restored",
+      restoredOptId,
+      restoredDetail);
+}
+
+bool probeSscmaDevice(char *error, size_t errorSize)
+{
+  JsonDocument response;
+  flushSscmaInput();
+  if (!sendSscmaCommand(SSCMA_ID_COMMAND, error, errorSize)) {
+    lastSscmaProbeError = 1;
+    return false;
+  }
+
+  if (!waitForExpectedJson(
+          CMD_TYPE_RESPONSE,
+          "ID?",
+          SSCMA_RESPONSE_TIMEOUT_MS,
+          response,
+          error,
+          errorSize)) {
+    lastSscmaProbeError = 1;
+    return false;
+  }
+
+  lastSscmaProbeError = 0;
   return true;
 }
 
@@ -697,9 +754,9 @@ bool initializeAiModule()
   aiName[0] = '\0';
   aiInfo[0] = '\0';
 
-  recoverSscmaI2cBus();
-  Wire.begin(SDA, SCL);
-  Wire.setClock(SSCMA_I2C_CLOCK);
+  sscmaSerial.end();
+  sscmaSerial.setRxBufferSize(SSCMA_UART_RX_BUFFER_SIZE);
+  sscmaSerial.begin(SSCMA_UART_BAUD, SERIAL_8N1, SSCMA_UART_RX_PIN, SSCMA_UART_TX_PIN);
   resetSscmaModule();
   resetSscmaParser();
 
@@ -888,6 +945,46 @@ void logDetections()
   }
 }
 
+void printCalibrationSampleMetadata(JsonObjectConst data)
+{
+  JsonArrayConst resolution = data["resolution"].as<JsonArrayConst>();
+  if (resolution.size() >= 2) {
+    char resolutionText[24];
+    snprintf(
+        resolutionText,
+        sizeof(resolutionText),
+        "%lu,%lu",
+        static_cast<unsigned long>(resolution[0] | 0),
+        static_cast<unsigned long>(resolution[1] | 0));
+    printUsbOnlyStatusValue("status", "calibration_image_resolution", resolutionText);
+  }
+
+  const unsigned long jpegByteCount = data["jpeg_byte_count"] | 0UL;
+  if (jpegByteCount > 0) {
+    printUsbOnlyStatusNumber("status", "calibration_jpeg_byte_count", jpegByteCount);
+  }
+
+  const unsigned long base64Length = data["base64_length"] | 0UL;
+  if (base64Length > 0) {
+    printUsbOnlyStatusNumber("status", "calibration_base64_length", base64Length);
+  }
+
+  const unsigned long chunkCount = data["chunk_count"] | 0UL;
+  if (chunkCount > 0) {
+    printUsbOnlyStatusNumber("status", "calibration_chunk_count", chunkCount);
+  }
+
+  if (!data["sensor_opt_id"].isNull()) {
+    const unsigned long sensorOptId = data["sensor_opt_id"] | 0UL;
+    printUsbOnlyStatusNumber("status", "calibration_sample_sensor_opt_id", sensorOptId);
+  }
+
+  const char *jpegQtable = data["jpeg_qtable"] | "";
+  if (jpegQtable[0] != '\0') {
+    printUsbOnlyStatusValue("status", "calibration_jpeg_qtable", jpegQtable);
+  }
+}
+
 void captureCalibrationImageUsbOnly()
 {
   if (!usbDebugActive) {
@@ -901,23 +998,36 @@ void captureCalibrationImageUsbOnly()
 
   printUsbOnlyStatusValue("status", "firmware_version", PEDFLOW_FIRMWARE_VERSION);
   printUsbOnlyStatus("status", "calibration_capture_started");
+  printUsbOnlyStatusValue("status", "calibration_capture_transport", SSCMA_CALIBRATION_TRANSPORT_DETAIL);
 
   char error[STATUS_BUFFER_SIZE] = "";
   JsonDocument response;
   flushSscmaInput();
-  if (!sendSscmaCommand(SSCMA_SAMPLE_IMAGE_COMMAND, error, sizeof(error)) ||
+  const CalibrationSensorState sensorState = selectCalibrationSensorOption();
+  if (!sensorState.selected) {
+    printUsbOnlyStatus("error", "calibration_capture_sensor_not_selected");
+    return;
+  }
+
+  if (!sendSscmaCommand(SSCMA_CALIB_SAMPLE_IMAGE_COMMAND, error, sizeof(error)) ||
       !waitForExpectedJson(
           CMD_TYPE_RESPONSE,
-          "SAMPLE",
+          "CALIBSAMPLE",
           SSCMA_RESPONSE_TIMEOUT_MS,
           response,
           error,
           sizeof(error))) {
     printUsbOnlyStatusValue("error", "calibration_capture_failed", error);
+    restoreCalibrationSensorOption(sensorState);
     return;
   }
 
   const unsigned long startMs = millis();
+  bool sawBegin = false;
+  unsigned long expectedChunkCount = 0;
+  unsigned long expectedBase64Length = 0;
+  unsigned long receivedChunkCount = 0;
+  unsigned long receivedBase64Length = 0;
   while (millis() - startMs <= SSCMA_IMAGE_EVENT_TIMEOUT_MS) {
     RawSscmaMessage message;
     const unsigned long elapsedMs = millis() - startMs;
@@ -925,6 +1035,7 @@ void captureCalibrationImageUsbOnly()
         elapsedMs >= SSCMA_IMAGE_EVENT_TIMEOUT_MS ? 0 : SSCMA_IMAGE_EVENT_TIMEOUT_MS - elapsedMs;
     if (!waitForRawSscmaMessage(message, remainingMs, error, sizeof(error))) {
       printUsbOnlyStatusValue("error", "calibration_capture_failed", error);
+      restoreCalibrationSensorOption(sensorState);
       return;
     }
 
@@ -939,34 +1050,113 @@ void captureCalibrationImageUsbOnly()
     const int type = sampleEvent["type"] | -1;
     const int code = sampleEvent["code"] | -1;
     const char *name = sampleEvent["name"] | "";
-    if (type != CMD_TYPE_EVENT || code != CMD_OK || strcmp(name, "SAMPLE") != 0) {
+    if (type != CMD_TYPE_EVENT || strcmp(name, "CALIBSAMPLE") != 0) {
       consumeRawSscmaMessage(message);
       continue;
     }
 
-    const char *image = sampleEvent["data"]["image"] | "";
-    const size_t imageLength = strlen(image);
-    if (imageLength == 0) {
+    if (code != CMD_OK) {
       consumeRawSscmaMessage(message);
-      printUsbOnlyStatus("error", "calibration_capture_empty_image");
+      snprintf(error, sizeof(error), "event_code_%d", code);
+      printUsbOnlyStatusValue("error", "calibration_capture_failed", error);
+      restoreCalibrationSensorOption(sensorState);
       return;
     }
 
-    char beginLine[STATUS_BUFFER_SIZE];
-    snprintf(
-        beginLine,
-        sizeof(beginLine),
-        "%s,%lu",
-        CALIBRATION_IMAGE_BEGIN_PREFIX,
-        static_cast<unsigned long>(imageLength));
-    Serial.println(beginLine);
-    Serial.println(image);
-    Serial.println(CALIBRATION_IMAGE_END);
+    JsonObjectConst data = sampleEvent["data"].as<JsonObjectConst>();
+    const char *phase = data["phase"] | "";
+
+    if (strcmp(phase, "begin") == 0) {
+      expectedChunkCount = data["chunk_count"] | 0UL;
+      expectedBase64Length = data["base64_length"] | 0UL;
+      if (expectedChunkCount == 0 || expectedBase64Length == 0) {
+        consumeRawSscmaMessage(message);
+        printUsbOnlyStatus("error", "calibration_capture_invalid_begin");
+        restoreCalibrationSensorOption(sensorState);
+        return;
+      }
+
+      printCalibrationSampleMetadata(data);
+
+      char beginLine[STATUS_BUFFER_SIZE];
+      snprintf(
+          beginLine,
+          sizeof(beginLine),
+          "%s,%lu",
+          CALIBRATION_IMAGE_BEGIN_PREFIX,
+          expectedBase64Length);
+      Serial.println(beginLine);
+      sawBegin = true;
+      consumeRawSscmaMessage(message);
+      continue;
+    }
+
+    if (strcmp(phase, "chunk") == 0) {
+      if (!sawBegin) {
+        consumeRawSscmaMessage(message);
+        printUsbOnlyStatus("error", "calibration_capture_chunk_before_begin");
+        restoreCalibrationSensorOption(sensorState);
+        return;
+      }
+
+      const unsigned long chunkIndex = data["chunk_index"] | 0UL;
+      if (chunkIndex != receivedChunkCount) {
+        consumeRawSscmaMessage(message);
+        snprintf(error, sizeof(error), "chunk_order_%lu_%lu", receivedChunkCount, chunkIndex);
+        printUsbOnlyStatusValue("error", "calibration_capture_failed", error);
+        restoreCalibrationSensorOption(sensorState);
+        return;
+      }
+
+      const char *imageChunk = data["image_chunk"] | "";
+      const size_t imageChunkLength = strlen(imageChunk);
+      if (imageChunkLength == 0) {
+        consumeRawSscmaMessage(message);
+        printUsbOnlyStatus("error", "calibration_capture_empty_chunk");
+        restoreCalibrationSensorOption(sensorState);
+        return;
+      }
+
+      Serial.println(imageChunk);
+      receivedBase64Length += static_cast<unsigned long>(imageChunkLength);
+      ++receivedChunkCount;
+      consumeRawSscmaMessage(message);
+      continue;
+    }
+
+    if (strcmp(phase, "end") == 0) {
+      if (!sawBegin) {
+        consumeRawSscmaMessage(message);
+        printUsbOnlyStatus("error", "calibration_capture_end_before_begin");
+        restoreCalibrationSensorOption(sensorState);
+        return;
+      }
+      if (receivedChunkCount != expectedChunkCount) {
+        consumeRawSscmaMessage(message);
+        snprintf(error, sizeof(error), "chunk_count_%lu_%lu", expectedChunkCount, receivedChunkCount);
+        printUsbOnlyStatusValue("error", "calibration_capture_failed", error);
+        restoreCalibrationSensorOption(sensorState);
+        return;
+      }
+      if (receivedBase64Length != expectedBase64Length) {
+        consumeRawSscmaMessage(message);
+        snprintf(error, sizeof(error), "base64_length_%lu_%lu", expectedBase64Length, receivedBase64Length);
+        printUsbOnlyStatusValue("error", "calibration_capture_failed", error);
+        restoreCalibrationSensorOption(sensorState);
+        return;
+      }
+
+      Serial.println(CALIBRATION_IMAGE_END);
+      consumeRawSscmaMessage(message);
+      restoreCalibrationSensorOption(sensorState);
+      return;
+    }
+
     consumeRawSscmaMessage(message);
-    return;
   }
 
   printUsbOnlyStatus("error", "calibration_capture_timeout");
+  restoreCalibrationSensorOption(sensorState);
 }
 
 void printModuleInfoUsbOnly()
@@ -983,11 +1173,40 @@ void printModuleInfoUsbOnly()
   snprintf(
       line,
       sizeof(line),
-      "#status,ai_i2c_errors,%u,%u,%u,%u",
-      static_cast<unsigned int>(lastSscmaProbeError),
-      static_cast<unsigned int>(lastSscmaWriteError),
-      static_cast<unsigned int>(lastSscmaAvailableError),
-      static_cast<unsigned int>(lastSscmaReadError));
+      "#status,ai_uart_errors,%lu,%lu,%lu,%lu",
+      static_cast<unsigned long>(lastSscmaProbeError),
+      static_cast<unsigned long>(lastSscmaWriteError),
+      static_cast<unsigned long>(lastSscmaAvailableError),
+      static_cast<unsigned long>(lastSscmaReadError));
+  Serial.println(line);
+  snprintf(
+      line,
+      sizeof(line),
+      "#status,ai_uart_transport,%d,%d,%lu",
+      static_cast<int>(SSCMA_UART_TX_PIN),
+      static_cast<int>(SSCMA_UART_RX_PIN),
+      static_cast<unsigned long>(SSCMA_UART_BAUD));
+  Serial.println(line);
+  snprintf(
+      line,
+      sizeof(line),
+      "#status,calibration_sensor_target,%d,%s",
+      SSCMA_CALIBRATION_SENSOR_OPT_ID,
+      SSCMA_CALIBRATION_SENSOR_DETAIL);
+  Serial.println(line);
+  snprintf(
+      line,
+      sizeof(line),
+      "#status,calibration_transport_target,%s",
+      SSCMA_CALIBRATION_TRANSPORT_DETAIL);
+  Serial.println(line);
+  snprintf(
+      line,
+      sizeof(line),
+      "#status,legacy_sensor_opts,%d,%d,%d",
+      SSCMA_SENSOR_OPT_240X240,
+      SSCMA_SENSOR_OPT_480X480,
+      SSCMA_SENSOR_OPT_640X480);
   Serial.println(line);
   if (aiId[0] != '\0') {
     printUsbOnlyStatusValue("status", "ai_id", aiId);

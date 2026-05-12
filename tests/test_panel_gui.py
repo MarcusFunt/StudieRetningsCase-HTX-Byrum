@@ -29,6 +29,13 @@ def test_panel_gui_builds_expected_analysis_and_calibration_tabs():
 def test_primary_workflow_controls_are_selectors_instead_of_path_text_inputs():
     pn = pytest.importorskip("panel")
 
+    from pedflow.calibration import (
+        DEFAULT_CHARUCO_MARGIN_MM,
+        DEFAULT_CHARUCO_MARKER_LENGTH_MM,
+        DEFAULT_CHARUCO_SQUARE_LENGTH_MM,
+        DEFAULT_CHARUCO_SQUARES_X,
+        DEFAULT_CHARUCO_SQUARES_Y,
+    )
     from pedflow.debug_panel import UsbDebugPanel
     from pedflow.gui import AnalysisPanel, CalibrationPanel
     from pedflow.operations_panel import OperationsPanel
@@ -48,6 +55,11 @@ def test_primary_workflow_controls_are_selectors_instead_of_path_text_inputs():
     assert "data/calibration_images/ground" not in calibration.intrinsics_image_dir.options
     assert "data/calibration_images/charuco" not in calibration.ground_image_dir.options
     assert isinstance(calibration.capture_port, pn.widgets.Select)
+    assert calibration.squares_x.value == DEFAULT_CHARUCO_SQUARES_X
+    assert calibration.squares_y.value == DEFAULT_CHARUCO_SQUARES_Y
+    assert calibration.square_length_mm.value == DEFAULT_CHARUCO_SQUARE_LENGTH_MM
+    assert calibration.marker_length_mm.value == DEFAULT_CHARUCO_MARKER_LENGTH_MM
+    assert calibration.margin_mm.value == DEFAULT_CHARUCO_MARGIN_MM
     assert isinstance(calibration.capture_usb_photo_button, pn.widgets.Button)
     assert isinstance(calibration.ground_capture_port, pn.widgets.Select)
     assert isinstance(calibration.ground_capture_usb_photo_button, pn.widgets.Button)
@@ -62,5 +74,10 @@ def test_primary_workflow_controls_are_selectors_instead_of_path_text_inputs():
     assert isinstance(calibration.intrinsics_path, pn.widgets.Select)
     assert isinstance(debug.port, pn.widgets.Select)
     assert isinstance(operations.capture_serial_port, pn.widgets.Select)
+    assert operations.board_squares_x.value == DEFAULT_CHARUCO_SQUARES_X
+    assert operations.board_squares_y.value == DEFAULT_CHARUCO_SQUARES_Y
+    assert operations.board_square_length_mm.value == DEFAULT_CHARUCO_SQUARE_LENGTH_MM
+    assert operations.board_marker_length_mm.value == DEFAULT_CHARUCO_MARKER_LENGTH_MM
+    assert operations.board_margin_mm.value == DEFAULT_CHARUCO_MARGIN_MM
     assert isinstance(operations.image_port, pn.widgets.Select)
     assert isinstance(operations.analysis_detections_path, pn.widgets.Select)

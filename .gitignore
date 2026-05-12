@@ -3,6 +3,7 @@ __pycache__/
 .ipynb_checkpoints/
 .venv/
 secrets/
+external/
 
 data/ground_markers.csv
 data/detections/*.csv

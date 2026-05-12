@@ -20,6 +20,12 @@ try:
         write_analysis_outputs,
     )
     from .calibration import (
+        DEFAULT_CHARUCO_DPI,
+        DEFAULT_CHARUCO_MARGIN_MM,
+        DEFAULT_CHARUCO_MARKER_LENGTH_MM,
+        DEFAULT_CHARUCO_SQUARE_LENGTH_MM,
+        DEFAULT_CHARUCO_SQUARES_X,
+        DEFAULT_CHARUCO_SQUARES_Y,
         calibrate_camera_from_charuco,
         compute_ground_homography,
         compute_ground_homography_from_charuco,
@@ -47,6 +53,12 @@ except ImportError:
         write_analysis_outputs,
     )
     from pedflow.calibration import (
+        DEFAULT_CHARUCO_DPI,
+        DEFAULT_CHARUCO_MARGIN_MM,
+        DEFAULT_CHARUCO_MARKER_LENGTH_MM,
+        DEFAULT_CHARUCO_SQUARE_LENGTH_MM,
+        DEFAULT_CHARUCO_SQUARES_X,
+        DEFAULT_CHARUCO_SQUARES_Y,
         calibrate_camera_from_charuco,
         compute_ground_homography,
         compute_ground_homography_from_charuco,
@@ -1131,17 +1143,34 @@ class CalibrationPanel:
             value=keep_or_first("outputs/charuco_board", board_output_options),
         )
         self.board_basename = pn.widgets.TextInput(name="File basename", value="charuco_board")
-        self.squares_x = pn.widgets.IntInput(name="Squares x", value=7, start=3)
-        self.squares_y = pn.widgets.IntInput(name="Squares y", value=5, start=3)
-        self.square_length_mm = pn.widgets.FloatInput(name="Square length (mm)", value=35.0)
-        self.marker_length_mm = pn.widgets.FloatInput(name="Marker length (mm)", value=25.0)
+        self.squares_x = pn.widgets.IntInput(
+            name="Squares x",
+            value=DEFAULT_CHARUCO_SQUARES_X,
+            start=3,
+        )
+        self.squares_y = pn.widgets.IntInput(
+            name="Squares y",
+            value=DEFAULT_CHARUCO_SQUARES_Y,
+            start=3,
+        )
+        self.square_length_mm = pn.widgets.FloatInput(
+            name="Square length (mm)",
+            value=DEFAULT_CHARUCO_SQUARE_LENGTH_MM,
+        )
+        self.marker_length_mm = pn.widgets.FloatInput(
+            name="Marker length (mm)",
+            value=DEFAULT_CHARUCO_MARKER_LENGTH_MM,
+        )
         self.dictionary = pn.widgets.Select(
             name="ArUco dictionary",
             options=["DICT_4X4_50", "DICT_5X5_100", "DICT_6X6_250", "DICT_7X7_1000"],
             value="DICT_5X5_100",
         )
-        self.dpi = pn.widgets.IntInput(name="DPI", value=300, start=72)
-        self.margin_mm = pn.widgets.FloatInput(name="Margin (mm)", value=10.0)
+        self.dpi = pn.widgets.IntInput(name="DPI", value=DEFAULT_CHARUCO_DPI, start=72)
+        self.margin_mm = pn.widgets.FloatInput(
+            name="Margin (mm)",
+            value=DEFAULT_CHARUCO_MARGIN_MM,
+        )
         self.refresh_board_files_button = pn.widgets.Button(name="Refresh files", height=38)
         self.generate_board_button = pn.widgets.Button(
             name="Generate board",
@@ -1195,7 +1224,7 @@ class CalibrationPanel:
         self.capture_basename = pn.widgets.TextInput(name="Photo basename", value="charuco_usb")
         self.capture_count = pn.widgets.IntInput(name="Photos", value=1, start=1)
         self.capture_interval_s = pn.widgets.FloatInput(name="Interval (s)", value=1.0, start=0.0)
-        self.capture_timeout_s = pn.widgets.FloatInput(name="Timeout (s)", value=30.0, start=1.0)
+        self.capture_timeout_s = pn.widgets.FloatInput(name="Timeout (s)", value=60.0, start=1.0)
         self.capture_settle_delay_s = pn.widgets.FloatInput(
             name="USB settle delay (s)",
             value=2.0,
@@ -1260,7 +1289,7 @@ class CalibrationPanel:
         )
         self.ground_capture_timeout_s = pn.widgets.FloatInput(
             name="Timeout (s)",
-            value=30.0,
+            value=60.0,
             start=1.0,
         )
         self.ground_capture_settle_delay_s = pn.widgets.FloatInput(

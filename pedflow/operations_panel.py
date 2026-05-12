@@ -24,7 +24,15 @@ from scripts.generate_secrets import (
 )
 
 from .analysis import FlowAnalysisSettings, run_flow_analysis, write_analysis_outputs
-from .calibration import generate_charuco_board
+from .calibration import (
+    DEFAULT_CHARUCO_DPI,
+    DEFAULT_CHARUCO_MARGIN_MM,
+    DEFAULT_CHARUCO_MARKER_LENGTH_MM,
+    DEFAULT_CHARUCO_SQUARE_LENGTH_MM,
+    DEFAULT_CHARUCO_SQUARES_X,
+    DEFAULT_CHARUCO_SQUARES_Y,
+    generate_charuco_board,
+)
 from .capture import (
     DEFAULT_BIND_HOST,
     DEFAULT_BUFFER_SIZE,
@@ -233,7 +241,7 @@ class OperationsPanel:
             value=2.0,
             start=0.0,
         )
-        self.image_timeout_s = pn.widgets.FloatInput(name="Timeout (s)", value=30.0, start=1.0)
+        self.image_timeout_s = pn.widgets.FloatInput(name="Timeout (s)", value=60.0, start=1.0)
         self.capture_image_button = pn.widgets.Button(
             name="Capture USB image",
             button_type="primary",
@@ -269,12 +277,29 @@ class OperationsPanel:
             options=["DICT_4X4_50", "DICT_5X5_100", "DICT_6X6_250", "DICT_7X7_1000"],
             value="DICT_5X5_100",
         )
-        self.board_squares_x = pn.widgets.IntInput(name="Squares x", value=7, start=3)
-        self.board_squares_y = pn.widgets.IntInput(name="Squares y", value=5, start=3)
-        self.board_square_length_mm = pn.widgets.FloatInput(name="Square length (mm)", value=35.0)
-        self.board_marker_length_mm = pn.widgets.FloatInput(name="Marker length (mm)", value=25.0)
-        self.board_dpi = pn.widgets.IntInput(name="DPI", value=300, start=72)
-        self.board_margin_mm = pn.widgets.FloatInput(name="Margin (mm)", value=10.0)
+        self.board_squares_x = pn.widgets.IntInput(
+            name="Squares x",
+            value=DEFAULT_CHARUCO_SQUARES_X,
+            start=3,
+        )
+        self.board_squares_y = pn.widgets.IntInput(
+            name="Squares y",
+            value=DEFAULT_CHARUCO_SQUARES_Y,
+            start=3,
+        )
+        self.board_square_length_mm = pn.widgets.FloatInput(
+            name="Square length (mm)",
+            value=DEFAULT_CHARUCO_SQUARE_LENGTH_MM,
+        )
+        self.board_marker_length_mm = pn.widgets.FloatInput(
+            name="Marker length (mm)",
+            value=DEFAULT_CHARUCO_MARKER_LENGTH_MM,
+        )
+        self.board_dpi = pn.widgets.IntInput(name="DPI", value=DEFAULT_CHARUCO_DPI, start=72)
+        self.board_margin_mm = pn.widgets.FloatInput(
+            name="Margin (mm)",
+            value=DEFAULT_CHARUCO_MARGIN_MM,
+        )
         self.generate_board_button = pn.widgets.Button(
             name="Generate ChArUco board",
             button_type="primary",

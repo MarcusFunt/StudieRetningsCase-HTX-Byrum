@@ -41,11 +41,25 @@ def test_calibration_image_capture_is_usb_serial_only():
     lower_source = source.lower()
 
     assert 'USB_CALIBRATION_CAPTURE_COMMAND[] = "CALIB_CAPTURE"' in source
-    assert 'SSCMA_SAMPLE_IMAGE_COMMAND[] = "AT+SAMPLE=1\\r\\n"' in source
-    assert 'strcmp(name, "SAMPLE")' in source
-    assert 'sampleEvent["data"]["image"]' in source
+    assert 'SSCMA_CALIB_SAMPLE_IMAGE_COMMAND[] = "AT+CALIBSAMPLE=1\\r\\n"' in source
+    assert 'SSCMA_SENSOR_QUERY_COMMAND[] = "AT+SENSOR?\\r\\n"' in source
+    assert "SSCMA_CALIBRATION_SENSOR_OPT_ID = SSCMA_SENSOR_OPT_640X480_CALIBRATION_HQ" in source
+    assert "SSCMA_SENSOR_OPT_640X480 = 2" in source
+    assert "SSCMA_SENSOR_OPT_640X480_CALIBRATION_HQ = 5" in source
+    assert "HardwareSerial sscmaSerial(1)" in source
+    assert "sscmaSerial.begin(SSCMA_UART_BAUD, SERIAL_8N1, SSCMA_UART_RX_PIN, SSCMA_UART_TX_PIN)" in source
+    assert "AT+SENSOR=1,1,%d" in source
+    assert "calibration_sensor_selected" in source
+    assert "calibration_sensor_restored" in source
+    assert 'strcmp(name, "CALIBSAMPLE")' in source
+    assert 'data["image_chunk"]' in source
+    assert "calibration_capture_transport" in source
+    assert "calibration_jpeg_qtable" in source
+    assert "calibration_chunk_count" in source
     assert "#calibration_image_begin" in source
     assert "Serial.println(CALIBRATION_IMAGE_END)" in source
+    assert "#include <Wire.h>" not in source
+    assert "Wire." not in source
     assert "parsepacket" not in lower_source
     assert "udp.read" not in lower_source
     assert "sendUdpLine(image" not in source

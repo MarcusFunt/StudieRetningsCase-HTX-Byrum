@@ -18,7 +18,8 @@ CALIBRATION_CAPTURE_COMMAND = "CALIB_CAPTURE"
 IMAGE_BEGIN_PREFIX = "#calibration_image_begin"
 IMAGE_END = "#calibration_image_end"
 CAPTURE_ERROR_PREFIX = "#error,calibration_capture"
-DEFAULT_CAPTURE_TIMEOUT_S = 30.0
+DEFAULT_CAPTURE_TIMEOUT_S = 60.0
+POST_CAPTURE_STATUS_TIMEOUT_S = 1.0
 
 _SAFE_BASENAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 _MAX_SAFE_BASENAME_LENGTH = 120
@@ -79,19 +80,31 @@ def request_calibration_image(
             expected_payload_length = _parse_begin_length(line)
             break
 
-    payload = _read_serial_line(device, deadline, "calibration image payload")
-    if payload.startswith("#error,"):
-        raise RuntimeError(payload)
+    payload_parts: list[str] = []
+    while True:
+        line = _read_serial_line(device, deadline, "calibration image payload")
+        if line.startswith("#") and status_handler is not None:
+            status_handler(line)
+        if line.startswith("#error,"):
+            raise RuntimeError(line)
+        if line == IMAGE_END:
+            break
+        if line.startswith("#"):
+            continue
+        payload_parts.append(line)
+
+    payload = "".join(payload_parts)
     if expected_payload_length is not None and len(payload) != expected_payload_length:
         raise ValueError(
             "Calibration image payload length mismatch: "
             f"expected {expected_payload_length}, got {len(payload)}"
         )
 
-    end_line = _read_serial_line(device, deadline, "calibration image footer")
-    if end_line != IMAGE_END:
-        raise ValueError(f"Unexpected calibration image footer: {end_line}")
-
+    _drain_post_capture_status(
+        device,
+        min(deadline, time.monotonic() + POST_CAPTURE_STATUS_TIMEOUT_S),
+        status_handler,
+    )
     return decode_calibration_image_payload(payload)
 
 
@@ -119,11 +132,14 @@ def capture_usb_calibration_photos(
     captures: list[UsbCalibrationCapture] = []
     current_firmware_version = firmware_version or UNKNOWN_FIRMWARE_VERSION
 
+    current_capture_settings: dict[str, object] = {}
+
     def handle_status(line: str) -> None:
         nonlocal current_firmware_version
         detected_version = firmware_version_from_status_line(line)
         if detected_version is not None:
             current_firmware_version = detected_version
+        current_capture_settings.update(_capture_settings_from_status_line(line))
 
     with serial.Serial(str(port).strip(), int(baud), timeout=0.5) as device:
         if settle_delay_s > 0:
@@ -133,6 +149,7 @@ def capture_usb_calibration_photos(
             if hasattr(device, "reset_input_buffer"):
                 device.reset_input_buffer()
 
+            current_capture_settings = {}
             started_at = datetime.now(UTC)
             jpeg = request_calibration_image(
                 device,
@@ -154,7 +171,7 @@ def capture_usb_calibration_photos(
                     timeout_s=float(timeout_s),
                     firmware_version=current_firmware_version,
                     calibration_path=calibration_path,
-                    settings=settings,
+                    settings=(settings or {}) | current_capture_settings,
                 )
             )
 
@@ -171,6 +188,106 @@ def _read_serial_line(device: SerialLike, deadline: float, label: str) -> str:
             continue
         return raw_line.decode("utf-8", errors="replace").strip()
     raise TimeoutError(f"Timed out waiting for {label}")
+
+
+def _drain_post_capture_status(
+    device: SerialLike,
+    deadline: float,
+    status_handler: Callable[[str], None] | None,
+) -> None:
+    if status_handler is None:
+        return
+
+    while time.monotonic() < deadline:
+        raw_line = device.readline()
+        if not raw_line:
+            return
+        line = raw_line.decode("utf-8", errors="replace").strip()
+        if not line.startswith("#"):
+            return
+        status_handler(line)
+
+
+def _capture_settings_from_status_line(line: str) -> dict[str, object]:
+    parts = line.split(",", 3)
+    if len(parts) < 2:
+        return {}
+
+    level = parts[0].lstrip("#")
+    code = parts[1]
+    value = parts[2] if len(parts) >= 3 else ""
+    detail = parts[3] if len(parts) >= 4 else ""
+    if code == "calibration_sensor_requested":
+        return _sensor_option_settings("requested_sensor", value, detail)
+    if code == "calibration_sensor_previous":
+        return _sensor_option_settings("previous_sensor", value, detail)
+    if code == "calibration_sensor_selected":
+        return _sensor_option_settings("selected_sensor", value, detail)
+    if code == "calibration_sensor_restored":
+        return _sensor_option_settings("restored_sensor", value, detail) | {
+            "sensor_restore_status": "restored"
+        }
+    if code == "calibration_capture_transport":
+        return {"sscma_transport": value}
+    if code == "calibration_image_resolution":
+        return _image_resolution_settings(value, detail)
+    if code == "calibration_jpeg_byte_count":
+        return _int_setting("reported_jpeg_byte_count", value)
+    if code == "calibration_base64_length":
+        return _int_setting("reported_base64_length", value)
+    if code == "calibration_chunk_count":
+        return _int_setting("reported_chunk_count", value)
+    if code == "calibration_sample_sensor_opt_id":
+        return _int_setting("calibsample_sensor_opt_id", value)
+    if code == "calibration_jpeg_qtable":
+        return {"jpeg_qtable": value} if value else {}
+    if level == "status" and code == "calibration_sensor_restore_not_needed":
+        return {"sensor_restore_status": "not_needed"}
+    if level != "error":
+        return {}
+    if code == "calibration_sensor_query_failed":
+        return {"sensor_query_error": value}
+    if code == "calibration_sensor_select_failed":
+        return {"sensor_select_error": value}
+    if code == "calibration_sensor_restore_failed":
+        return {
+            "sensor_restore_error": value,
+            "sensor_restore_status": "failed",
+        }
+    return {}
+
+
+def _sensor_option_settings(prefix: str, opt_id: str, detail: str) -> dict[str, object]:
+    settings: dict[str, object] = {}
+    try:
+        settings[f"{prefix}_opt_id"] = int(opt_id)
+    except ValueError:
+        settings[f"{prefix}_opt_id_raw"] = opt_id
+    if detail:
+        settings[f"{prefix}_detail"] = detail
+    return settings
+
+
+def _int_setting(key: str, value: str) -> dict[str, object]:
+    try:
+        return {key: int(value)}
+    except ValueError:
+        return {f"{key}_raw": value}
+
+
+def _image_resolution_settings(width_or_resolution: str, height: str) -> dict[str, object]:
+    if height:
+        raw_width = width_or_resolution
+        raw_height = height
+    elif "x" in width_or_resolution.lower():
+        raw_width, raw_height = re.split("x", width_or_resolution, maxsplit=1, flags=re.IGNORECASE)
+    else:
+        return {"image_resolution_raw": width_or_resolution}
+
+    try:
+        return {"image_width": int(raw_width), "image_height": int(raw_height)}
+    except ValueError:
+        return {"image_resolution_raw": f"{raw_width}x{raw_height}"}
 
 
 def _parse_begin_length(line: str) -> int | None:

@@ -79,6 +79,47 @@ python scripts/capture_serial.py --port COM5 --output data/detections/session.cs
 
 Change `COM5` to the XIAO serial port.
 
+### HX6538 Calibration Firmware
+
+High-quality calibration capture needs a patched Grove Vision AI V2 HX6538/SSCMA firmware. The full SDK clones live under `external/` and are ignored by git; this repo tracks only helper scripts and the patch file.
+
+Prepare the SDK clones:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\firmware\hx6538\setup_sdks.ps1
+```
+
+Apply the calibration patch to `external\SSCMA-Micro`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\firmware\hx6538\apply_sscma_patch.ps1
+```
+
+The patch adds `AT+CALIBSAMPLE=1`, which emits chunked `CALIBSAMPLE` JSON events, and adds Grove Vision AI V2 sensor preset `opt_id=5` as `640x480 Calibration HQ` using `JPEG_ENC_QTABLE_4X`. Existing `opt_id` values `0`, `1`, and `2` are unchanged. The Himax examples SDK is cloned for the HX6538 toolchain, image generation, and flashing flow; the AT command implementation itself is in the patched `external\SSCMA-Micro` tree.
+
+After building the Grove V2 SSCMA firmware from the patched `SSCMA-Micro` sources, generate and flash the HX6538 image using the Himax SDK flow:
+
+```powershell
+cd external\Seeed_Grove_Vision_AI_Module_V2\EPII_CM55M_APP_S
+make clean
+make
+cd ..\we2_image_gen_local
+copy ..\EPII_CM55M_APP_S\obj_epii_evb_icv30_bdv10\gnu_epii_evb_WLCSP65\EPII_CM55M_gnu_epii_evb_WLCSP65_s.elf input_case1_secboot\
+.\we2_local_image_gen.exe project_case1_blp_wlcsp.json
+python ..\xmodem\xmodem_send.py --port COM_HX --baudrate=921600 --protocol=xmodem --file=output_case1_sec_wlcsp\output.img
+```
+
+Use the actual Grove Vision AI V2 serial port instead of `COM_HX`. The Himax README documents the Arm GNU toolchain, `make`, image generation, bootloader menu, and XMODEM transfer details.
+
+Wire the XIAO ESP32-C6 to the HX6538 UART before using `CALIB_CAPTURE`:
+
+- HX `PB6/UART1_RX` to XIAO `D6/TX`
+- HX `PB7/UART1_TX` to XIAO `D7/RX`
+- common `GND`
+- 3.3 V logic only
+
+The XIAO sketch keeps USB `Serial` for the PC and talks to the HX6538 over `HardwareSerial` at `921600` baud. A USB `CALIB_CAPTURE` command sends `AT+SENSOR=1,1,5`, then `AT+CALIBSAMPLE=1`, streams base64 image chunks over USB, and restores the previous sensor option afterward. Expected metadata includes `sscma_transport: uart_921600`, `selected_sensor_opt_id: 5`, `selected_sensor_detail: 640x480 Calibration HQ`, `jpeg_qtable: JPEG_ENC_QTABLE_4X`, `image_width: 640`, `image_height: 480`, JPEG byte count, base64 length, and chunk count.
+
 Calibration photos are taken from the GUI only over USB serial and are kept in separate folders:
 
 1. Flash `GroveAIV2_Box_AP/GroveAIV2_Box_AP.ino` to the XIAO ESP32-C6.
@@ -151,7 +192,7 @@ Generate the printable ChArUco board from the command line if needed:
 python scripts/generate_charuco_board.py --output-dir outputs/charuco_board
 ```
 
-Print `outputs/charuco_board/charuco_board.pdf` at 100% scale. Do not use fit-to-page, because the metadata stores the exact board dimensions used by OpenCV calibration.
+By default this generates an A3 landscape ChArUco board. Print `outputs/charuco_board/charuco_board.pdf` on A3 paper at 100% scale. Do not use fit-to-page, because the metadata stores the exact board dimensions used by OpenCV calibration.
 
 Geometry order is always:
 

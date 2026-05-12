@@ -15,6 +15,16 @@ import pandas as pd
 from .geometry import apply_homography, save_calibration, undistort_points
 
 DEFAULT_CHARUCO_DICTIONARY = "DICT_5X5_100"
+DEFAULT_CHARUCO_SQUARES_X = 8
+DEFAULT_CHARUCO_SQUARES_Y = 6
+DEFAULT_CHARUCO_SQUARE_LENGTH_MM = 44.5
+DEFAULT_CHARUCO_MARKER_LENGTH_MM = 31.0
+DEFAULT_CHARUCO_DPI = 300
+DEFAULT_CHARUCO_MARGIN_MM = 15.0
+DEFAULT_CHARUCO_PAPER_SIZE = "A3"
+DEFAULT_CHARUCO_PAPER_ORIENTATION = "landscape"
+DEFAULT_CHARUCO_PAPER_WIDTH_MM = 420.0
+DEFAULT_CHARUCO_PAPER_HEIGHT_MM = 297.0
 GROUND_MARKER_COLUMNS = ("image_x", "image_y", "ground_x_m", "ground_y_m")
 _SAFE_BASENAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 _MAX_SAFE_BASENAME_LENGTH = 120
@@ -87,13 +97,13 @@ def charuco_board_from_metadata(metadata: dict) -> cv2.aruco.CharucoBoard:
 
 def generate_charuco_board(
     output_dir: str | Path,
-    squares_x: int = 7,
-    squares_y: int = 5,
-    square_length_mm: float = 35.0,
-    marker_length_mm: float = 25.0,
+    squares_x: int = DEFAULT_CHARUCO_SQUARES_X,
+    squares_y: int = DEFAULT_CHARUCO_SQUARES_Y,
+    square_length_mm: float = DEFAULT_CHARUCO_SQUARE_LENGTH_MM,
+    marker_length_mm: float = DEFAULT_CHARUCO_MARKER_LENGTH_MM,
     dictionary_name: str = DEFAULT_CHARUCO_DICTIONARY,
-    dpi: int = 300,
-    margin_mm: float = 10.0,
+    dpi: int = DEFAULT_CHARUCO_DPI,
+    margin_mm: float = DEFAULT_CHARUCO_MARGIN_MM,
     basename: str = "charuco_board",
 ) -> dict:
     """Generate printable ChArUco board assets and metadata.
@@ -151,6 +161,10 @@ def generate_charuco_board(
         "created_utc": datetime.now(UTC).isoformat(),
         "opencv_version": cv2.__version__,
         "dictionary": dictionary_name,
+        "paper_size": DEFAULT_CHARUCO_PAPER_SIZE,
+        "paper_orientation": DEFAULT_CHARUCO_PAPER_ORIENTATION,
+        "paper_width_mm": DEFAULT_CHARUCO_PAPER_WIDTH_MM,
+        "paper_height_mm": DEFAULT_CHARUCO_PAPER_HEIGHT_MM,
         "squares_x": int(squares_x),
         "squares_y": int(squares_y),
         "charuco_corners_x": int(squares_x - 1),
@@ -171,7 +185,10 @@ def generate_charuco_board(
         "pdf_path": str(pdf_path),
         "metadata_path": str(metadata_path),
         "png_sha256": hashlib.sha256(png_path.read_bytes()).hexdigest(),
-        "print_instructions": "Print the PDF at 100% scale. Do not fit-to-page or shrink-to-margins.",
+        "print_instructions": (
+            "Print the PDF at 100% scale on A3 landscape paper. "
+            "Do not fit-to-page or shrink-to-margins."
+        ),
         "privacy_note": (
             "This board is for manual geometry calibration only. Calibration images should avoid "
             "pedestrians and should be deleted after calibration JSON has been verified."

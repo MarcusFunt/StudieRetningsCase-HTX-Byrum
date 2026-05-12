@@ -1,0 +1,367 @@
+diff --git a/porting/el_camera.h b/porting/el_camera.h
+index 02b8032..81d34a3 100644
+--- a/porting/el_camera.h
++++ b/porting/el_camera.h
+@@ -44,7 +44,8 @@ class Camera {
+           el_sensor_opt_t{.id = 1,   .details = "480x480 Auto"},
+           el_sensor_opt_t{.id = 2,   .details = "640x480 Auto"},
+           el_sensor_opt_t{.id = 3,  .details = "1280x720 Auto"},
+-          el_sensor_opt_t{.id = 4, .details = "1920x1080 Auto"}
++          el_sensor_opt_t{.id = 4, .details = "1920x1080 Auto"},
++          el_sensor_opt_t{.id = 5, .details = "640x480 Calibration HQ"}
+         };
+ 
+         for (auto& opt : presets) {
+diff --git a/porting/himax/we2/drivers/drv_ov5647.c b/porting/himax/we2/drivers/drv_ov5647.c
+index 4e1eb48..6bd9ef4 100644
+--- a/porting/himax/we2/drivers/drv_ov5647.c
++++ b/porting/himax/we2/drivers/drv_ov5647.c
+@@ -34,6 +34,8 @@ static HX_CIS_SensorSetting_t OV5647_mirror_setting[] = {
+   {HX_CIS_I2C_Action_W, 0x3821, 0b00000111},
+ };
+ 
++static bool g_ov5647_calibration_qtable = false;
++
+ el_err_code_t drv_ov5647_probe() {
+     hx_drv_cis_init((CIS_XHSHUTDOWN_INDEX_E)DEAULT_XHSUTDOWN_PIN, SENSORCTRL_MCLK_DIV3);
+ 
+@@ -54,6 +56,10 @@ el_err_code_t drv_ov5647_probe() {
+     return EL_OK;
+ }
+ 
++void drv_ov5647_set_calibration_qtable(bool enabled) {
++    g_ov5647_calibration_qtable = enabled;
++}
++
+ static uint32_t ov5647_set_dp_rc96() {
+     SCU_PDHSC_DPCLK_CFG_T cfg;
+ 
+@@ -358,7 +364,7 @@ el_err_code_t drv_ov5647_init(uint16_t width, uint16_t height) {
+     jpeg_cfg.enc_width      = width;
+     jpeg_cfg.enc_height     = height;
+     jpeg_cfg.jpeg_enctype   = JPEG_ENC_TYPE_YUV422;
+-    jpeg_cfg.jpeg_encqtable = JPEG_ENC_QTABLE_10X;
++    jpeg_cfg.jpeg_encqtable = g_ov5647_calibration_qtable ? JPEG_ENC_QTABLE_4X : JPEG_ENC_QTABLE_10X;
+     // if (_switch_qtable == true) {
+     //     jpeg_cfg.jpeg_encqtable = JPEG_ENC_QTABLE_10X;
+     //     _switch_qtable          = false;
+diff --git a/porting/himax/we2/drivers/drv_ov5647.h b/porting/himax/we2/drivers/drv_ov5647.h
+index 9ab27e5..c85d85b 100644
+--- a/porting/himax/we2/drivers/drv_ov5647.h
++++ b/porting/himax/we2/drivers/drv_ov5647.h
+@@ -36,6 +36,7 @@
+ #include <hx_drv_timer.h>
+ #include <sensor_dp_lib.h>
+ #include <stdarg.h>
++#include <stdbool.h>
+ #include <stdint.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -94,6 +95,7 @@ extern "C" {
+ #endif
+ 
+ el_err_code_t drv_ov5647_probe();
++void          drv_ov5647_set_calibration_qtable(bool enabled);
+ el_err_code_t drv_ov5647_init(uint16_t width, uint16_t height);
+ el_err_code_t drv_ov5647_deinit();
+ el_err_code_t drv_ov5647_set_reg(uint16_t addr, uint8_t value);
+diff --git a/porting/himax/we2/el_camera_we2.cpp b/porting/himax/we2/el_camera_we2.cpp
+index 6e3bfb2..516a56e 100644
+--- a/porting/himax/we2/el_camera_we2.cpp
++++ b/porting/himax/we2/el_camera_we2.cpp
+@@ -64,7 +64,7 @@ CameraWE2::CameraWE2() : Camera(0b00001111) {
+     }
+ }
+ #elif defined(CONFIG_EL_BOARD_GROVE_VISION_AI_V2) || defined(CONFIG_EL_BOARD_SENSECAP_A1102)
+-CameraWE2::CameraWE2() : Camera(0b00000111) {}
++CameraWE2::CameraWE2() : Camera((1 << 0) | (1 << 1) | (1 << 2) | (1 << 5)) {}
+ #else
+     #error "Camera moudle does not find supported board."
+ #endif
+@@ -137,17 +137,26 @@ el_err_code_t CameraWE2::init(SensorOptIdType opt_id) {
+ #elif defined(CONFIG_EL_BOARD_GROVE_VISION_AI_V2) || defined(CONFIG_EL_BOARD_SENSECAP_A1102)
+     switch (opt_id & 0x0FFF) {
+     case 0:
++        drv_ov5647_set_calibration_qtable(false);
+         ret                   = _drv_cam_init(240, 240);
+         this->_current_opt_id = 0;
+         break;
+     case 1:
++        drv_ov5647_set_calibration_qtable(false);
+         ret                   = _drv_cam_init(480, 480);
+         this->_current_opt_id = 1;
+         break;
+     case 2:
++        drv_ov5647_set_calibration_qtable(false);
+         ret                   = _drv_cam_init(640, 480);
+         this->_current_opt_id = 2;
+         break;
++    case 5:
++        drv_ov5647_set_calibration_qtable(true);
++        ret                   = _drv_cam_init(640, 480);
++        this->_current_opt_id = 5;
++        drv_ov5647_set_calibration_qtable(false);
++        break;
+     default:
+         ret = EL_EINVAL;
+     }
+diff --git a/sscma/callback/calib_sample.hpp b/sscma/callback/calib_sample.hpp
+new file mode 100644
+index 0000000..3deeb88
+--- /dev/null
++++ b/sscma/callback/calib_sample.hpp
+@@ -0,0 +1,222 @@
++#pragma once
++
++#include <algorithm>
++#include <atomic>
++#include <memory>
++#include <string>
++
++#include "core/utils/el_base64.h"
++#include "sscma/definations.hpp"
++#include "sscma/static_resource.hpp"
++#include "sscma/utility.hpp"
++
++namespace sscma::callback {
++
++using namespace sscma::utility;
++
++class CalibSample final : public std::enable_shared_from_this<CalibSample> {
++   public:
++    std::shared_ptr<CalibSample> getptr() { return shared_from_this(); }
++
++    [[nodiscard]] static std::shared_ptr<CalibSample> create(std::string cmd, int32_t n_times, void* caller) {
++        return std::shared_ptr<CalibSample>{
++          new CalibSample{std::move(cmd), n_times, caller}
++        };
++    }
++
++    ~CalibSample() { static_resource->is_sample = false; }
++
++    inline void run() { prepare(); }
++
++   protected:
++    CalibSample(std::string cmd, int32_t n_times, void* caller)
++        : _cmd{cmd},
++          _n_times{n_times},
++          _caller{caller},
++          _task_id{static_resource->current_task_id.load(std::memory_order_seq_cst)},
++          _ret{EL_OK} {
++        static_resource->is_sample = true;
++    }
++
++   private:
++    static constexpr std::size_t RAW_CHUNK_SIZE    = 3072;
++    static constexpr std::size_t BASE64_CHUNK_SIZE = ((RAW_CHUNK_SIZE + 2u) / 3u) << 2u;
++
++    inline void prepare() {
++        prepare_sensor_info();
++        if (_n_times != 1) [[unlikely]] {
++            _ret = EL_EINVAL;
++            direct_reply();
++            return;
++        }
++        if (!check_sensor_status()) [[unlikely]]
++            goto Err;
++
++        static_resource->executor->add_task(
++          [_this = std::move(getptr())](const std::atomic<bool>&) { _this->event_loop(); });
++        return;
++
++    Err:
++        direct_reply();
++    }
++
++    inline void prepare_sensor_info() {
++        _sensor_info = static_resource->device->get_sensor_info(static_resource->current_sensor_id);
++    }
++
++    inline bool check_sensor_status() {
++        _ret = _sensor_info.id != 0 ? EL_OK : EL_EIO;
++        if (_ret != EL_OK) [[unlikely]]
++            return false;
++        _ret = _sensor_info.state == EL_SENSOR_STA_AVAIL ? EL_OK : EL_EIO;
++        if (_ret != EL_OK) [[unlikely]]
++            return false;
++        return true;
++    }
++
++    inline void direct_reply() {
++        auto ss{concat_strings("\r{\"type\": 0, \"name\": \"",
++                               _cmd,
++                               "\", \"code\": ",
++                               std::to_string(_ret),
++                               ", \"data\": {\"sensor\": ",
++                               sensor_info_2_json_str(_sensor_info, static_resource->device),
++                               "}}\n")};
++        static_cast<Transport*>(_caller)->send_bytes(ss.c_str(), ss.size());
++    }
++
++    inline const char* jpeg_qtable() const {
++        return _sensor_opt_id == 5 ? "JPEG_ENC_QTABLE_4X" : "module_default";
++    }
++
++    inline std::string event_prefix(const char* phase, int32_t chunk_index) const {
++        return concat_strings("\r{\"type\": 1, \"name\": \"",
++                              _cmd,
++                              "\", \"code\": ",
++                              std::to_string(_ret),
++                              ", \"data\": {\"phase\": \"",
++                              phase,
++                              "\", \"resolution\": [",
++                              std::to_string(_width),
++                              ", ",
++                              std::to_string(_height),
++                              "], \"jpeg_byte_count\": ",
++                              std::to_string(_jpeg_byte_count),
++                              ", \"base64_length\": ",
++                              std::to_string(_base64_length),
++                              ", \"chunk_index\": ",
++                              std::to_string(chunk_index),
++                              ", \"chunk_count\": ",
++                              std::to_string(_chunk_count),
++                              ", \"sensor_opt_id\": ",
++                              std::to_string(_sensor_opt_id),
++                              ", \"jpeg_qtable\": \"",
++                              jpeg_qtable(),
++                              "\"");
++    }
++
++    inline void event_reply_no_chunk(const char* phase, int32_t chunk_index) {
++        auto ss{concat_strings(event_prefix(phase, chunk_index), "}}\n")};
++        static_cast<Transport*>(_caller)->send_bytes(ss.c_str(), ss.size());
++    }
++
++    inline void event_reply_chunk(std::size_t chunk_index, const uint8_t* data, std::size_t size) {
++        char encoded[BASE64_CHUNK_SIZE + 1]{};
++        const std::size_t encoded_size = ((size + 2u) / 3u) << 2u;
++        el_base64_encode(data, static_cast<int>(size), encoded);
++        encoded[encoded_size] = '\0';
++
++        auto prefix{concat_strings(event_prefix("chunk", static_cast<int32_t>(chunk_index)), ", \"image_chunk\": \"")};
++        static_cast<Transport*>(_caller)->send_bytes(prefix.c_str(), prefix.size());
++        static_cast<Transport*>(_caller)->send_bytes(encoded, encoded_size);
++        static_cast<Transport*>(_caller)->send_bytes("\"}}\n", 4);
++    }
++
++    inline void prepare_frame_metadata(const el_img_t& frame) {
++        auto camera       = static_resource->device->get_camera();
++        _width            = frame.width;
++        _height           = frame.height;
++        _jpeg_byte_count  = frame.size;
++        _base64_length    = ((frame.size + 2u) / 3u) << 2u;
++        _chunk_count      = (frame.size + RAW_CHUNK_SIZE - 1u) / RAW_CHUNK_SIZE;
++        _sensor_opt_id    = static_cast<int32_t>(camera->current_opt_id());
++    }
++
++    inline void event_loop() {
++        switch (_sensor_info.type) {
++        case EL_SENSOR_TYPE_CAM:
++            direct_reply();
++            return event_loop_cam();
++        default:
++            _ret = EL_ENOTSUP;
++            direct_reply();
++        }
++    }
++
++    void event_loop_cam() {
++        if (static_resource->current_task_id.load(std::memory_order_seq_cst) != _task_id) [[unlikely]]
++            return;
++
++        auto camera       = static_resource->device->get_camera();
++        auto frame        = el_img_t{};
++        bool stream_open  = false;
++
++        _ret = camera->start_stream();
++        if (!is_everything_ok()) [[unlikely]]
++            goto Err;
++        stream_open = true;
++
++#if CONFIG_EL_HAS_ACCELERATED_JPEG_CODEC
++        _ret = camera->get_processed_frame(&frame);
++#else
++        _ret = EL_ENOTSUP;
++#endif
++        if (!is_everything_ok() || !frame.data || frame.size == 0) [[unlikely]] {
++            if (_ret == EL_OK) _ret = EL_EIO;
++            goto Err;
++        }
++
++        _ret = camera->stop_stream();
++        stream_open = false;
++        if (!is_everything_ok()) [[unlikely]]
++            goto Err;
++
++        prepare_frame_metadata(frame);
++        event_reply_no_chunk("begin", 0);
++
++        for (std::size_t index = 0; index < _chunk_count; ++index) {
++            const std::size_t offset     = index * RAW_CHUNK_SIZE;
++            const std::size_t chunk_size = std::min<std::size_t>(RAW_CHUNK_SIZE, frame.size - offset);
++            event_reply_chunk(index, frame.data + offset, chunk_size);
++        }
++
++        event_reply_no_chunk("end", static_cast<int32_t>(_chunk_count));
++        return;
++
++    Err:
++        if (stream_open) {
++            camera->stop_stream();
++        }
++        event_reply_no_chunk("end", 0);
++    }
++
++    inline bool is_everything_ok() const { return _ret == EL_OK; }
++
++   private:
++    std::string _cmd;
++    int32_t     _n_times;
++    void*       _caller;
++
++    std::size_t      _task_id;
++    el_sensor_info_t _sensor_info;
++
++    el_err_code_t _ret;
++    std::size_t   _width           = 0;
++    std::size_t   _height          = 0;
++    std::size_t   _jpeg_byte_count = 0;
++    std::size_t   _base64_length   = 0;
++    std::size_t   _chunk_count     = 0;
++    int32_t       _sensor_opt_id   = -1;
++};
++
++}  // namespace sscma::callback
+diff --git a/sscma/main_task.hpp b/sscma/main_task.hpp
+index aef11dc..8d1bd3d 100644
+--- a/sscma/main_task.hpp
++++ b/sscma/main_task.hpp
+@@ -5,6 +5,7 @@
+ 
+ #include "callback/action.hpp"
+ #include "callback/algorithm.hpp"
++#include "callback/calib_sample.hpp"
+ #include "callback/common.hpp"
+ #include "callback/info.hpp"
+ #include "callback/invoke.hpp"
+@@ -229,6 +230,19 @@ void register_commands() {
+           return EL_OK;
+       });
+ 
++    static_resource->instance->register_cmd(
++      "CALIBSAMPLE",
++      "Sample one calibration JPEG from current camera",
++      "N_TIMES",
++      [](std::vector<std::string> argv, void* caller) {
++          static_resource->executor->add_task(
++            [cmd = std::move(argv[0]), n_times = std::atoi(argv[1].c_str()), caller](const std::atomic<bool>&) {
++                static_resource->current_task_id.fetch_add(1, std::memory_order_seq_cst);
++                CalibSample::create(cmd, n_times, caller)->run();
++            });
++          return EL_OK;
++      });
++
+     static_resource->instance->register_cmd(
+       "INVOKE",
+       "Invoke for N times (-1 for infinity loop)",

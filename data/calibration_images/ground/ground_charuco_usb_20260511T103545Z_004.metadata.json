@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "session_type": "calibration_image_capture",
+  "start_utc": "2026-05-11T10:35:44.259030+00:00",
+  "end_utc": "2026-05-11T10:35:45.012853+00:00",
+  "capture_utc": "2026-05-11T10:35:45.012853+00:00",
+  "firmware_version": "0.1.0",
+  "calibration_json_path": "outputs/calibration_intrinsics.json",
+  "settings": {
+    "transport": "usb_serial",
+    "firmware_command": "CALIB_CAPTURE",
+    "port": "COM11",
+    "baud": 115200,
+    "basename": "ground_charuco_usb",
+    "index": 4,
+    "total_count": 10,
+    "timeout_s": 29.799999999999997,
+    "workflow": "ground_homography",
+    "image_folder_role": "ground"
+  },
+  "output_path": "C:\\Users\\marcu\\Documents\\GitHub\\StudieRetningsCase-HTX-Byrum\\data\\calibration_images\\ground\\ground_charuco_usb_20260511T103545Z_004.jpg",
+  "output_files": {
+    "calibration_image": "C:\\Users\\marcu\\Documents\\GitHub\\StudieRetningsCase-HTX-Byrum\\data\\calibration_images\\ground\\ground_charuco_usb_20260511T103545Z_004.jpg",
+    "metadata_json": "C:\\Users\\marcu\\Documents\\GitHub\\StudieRetningsCase-HTX-Byrum\\data\\calibration_images\\ground\\ground_charuco_usb_20260511T103545Z_004.metadata.json"
+  },
+  "jpeg_byte_count": 3452,
+  "image_sha256": "62047f08bb560bdec3e69a708b5b010ddaa44d4a8ccfd9804f45919beabb4319",
+  "privacy_note": "Calibration image capture is requested over local USB serial only. The firmware does not expose Wi-Fi image capture or streaming."
+}

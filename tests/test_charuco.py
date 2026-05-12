@@ -6,10 +6,21 @@ import cv2
 import numpy as np
 
 from pedflow.calibration import (
+    DEFAULT_CHARUCO_DPI,
+    DEFAULT_CHARUCO_MARGIN_MM,
+    DEFAULT_CHARUCO_MARKER_LENGTH_MM,
+    DEFAULT_CHARUCO_PAPER_HEIGHT_MM,
+    DEFAULT_CHARUCO_PAPER_ORIENTATION,
+    DEFAULT_CHARUCO_PAPER_SIZE,
+    DEFAULT_CHARUCO_PAPER_WIDTH_MM,
+    DEFAULT_CHARUCO_SQUARE_LENGTH_MM,
+    DEFAULT_CHARUCO_SQUARES_X,
+    DEFAULT_CHARUCO_SQUARES_Y,
     _charuco_object_points_to_ground,
     charuco_board_from_metadata,
     compute_ground_homography_from_charuco,
     detect_charuco_image_points,
+    generate_charuco_board,
 )
 
 
@@ -67,6 +78,25 @@ def test_generate_charuco_board_script_writes_printable_board_and_metadata(tmp_p
     assert len(object_points) == len(image_points)
     assert len(image_points) >= 4
     assert marker_count > 0
+
+
+def test_generate_charuco_board_defaults_to_a3_landscape_board(tmp_path):
+    metadata = generate_charuco_board(tmp_path)
+
+    assert metadata["paper_size"] == DEFAULT_CHARUCO_PAPER_SIZE
+    assert metadata["paper_orientation"] == DEFAULT_CHARUCO_PAPER_ORIENTATION
+    assert metadata["paper_width_mm"] == DEFAULT_CHARUCO_PAPER_WIDTH_MM
+    assert metadata["paper_height_mm"] == DEFAULT_CHARUCO_PAPER_HEIGHT_MM
+    assert metadata["squares_x"] == DEFAULT_CHARUCO_SQUARES_X
+    assert metadata["squares_y"] == DEFAULT_CHARUCO_SQUARES_Y
+    assert metadata["square_length_mm"] == DEFAULT_CHARUCO_SQUARE_LENGTH_MM
+    assert metadata["marker_length_mm"] == DEFAULT_CHARUCO_MARKER_LENGTH_MM
+    assert metadata["margin_mm"] == DEFAULT_CHARUCO_MARGIN_MM
+    assert metadata["dpi"] == DEFAULT_CHARUCO_DPI
+    assert metadata["charuco_corners_x"] * metadata["charuco_corners_y"] == 35
+    assert metadata["board_width_m"] == 0.356
+    assert metadata["board_height_m"] == 0.267
+    assert "A3 landscape" in metadata["print_instructions"]
 
 
 def test_charuco_object_points_rotate_into_ground_coordinates():

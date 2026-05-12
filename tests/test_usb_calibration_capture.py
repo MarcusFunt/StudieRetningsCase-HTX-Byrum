@@ -7,6 +7,7 @@ import pytest
 from pedflow.usb_calibration_capture import (
     _MAX_SAFE_BASENAME_LENGTH,
     CALIBRATION_CAPTURE_COMMAND,
+    _capture_settings_from_status_line,
     _safe_basename,
     _unique_capture_path,
     _write_capture,
@@ -50,6 +51,68 @@ def test_request_calibration_image_sends_usb_command_and_decodes_jpeg():
     assert request_calibration_image(device, timeout_s=0.5) == b"\xff\xd8\xff\xd9"
     assert device.writes == [f"{CALIBRATION_CAPTURE_COMMAND}\n".encode("ascii")]
     assert device.flushed
+
+
+def test_request_calibration_image_reconstructs_chunked_payload():
+    device = FakeSerial(
+        [
+            b"#status,calibration_capture_started\n",
+            b"#calibration_image_begin,8\n",
+            b"/9j/\n",
+            b"2Q==\n",
+            b"#calibration_image_end\n",
+        ]
+    )
+
+    assert request_calibration_image(device, timeout_s=0.5) == b"\xff\xd8\xff\xd9"
+
+
+def test_request_calibration_image_rejects_truncated_chunk_payload():
+    device = FakeSerial(
+        [
+            b"#status,calibration_capture_started\n",
+            b"#calibration_image_begin,12\n",
+            b"/9j/\n",
+            b"2Q==\n",
+            b"#calibration_image_end\n",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="payload length mismatch"):
+        request_calibration_image(device, timeout_s=0.5)
+
+
+def test_request_calibration_image_fails_on_malformed_chunk_error():
+    device = FakeSerial(
+        [
+            b"#status,calibration_capture_started\n",
+            b"#calibration_image_begin,8\n",
+            b"/9j/\n",
+            b"#error,calibration_capture_failed,chunk_order_1_2\n",
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="chunk_order_1_2"):
+        request_calibration_image(device, timeout_s=0.5)
+
+
+def test_request_calibration_image_collects_post_capture_status_lines():
+    device = FakeSerial(
+        [
+            b"#status,calibration_capture_started\n",
+            b"#calibration_image_begin,8\n",
+            b"/9j/2Q==\n",
+            b"#calibration_image_end\n",
+            b"#status,calibration_sensor_restored,0,240x240 Auto\n",
+        ]
+    )
+    statuses: list[str] = []
+
+    assert request_calibration_image(device, timeout_s=0.5, status_handler=statuses.append) == (
+        b"\xff\xd8\xff\xd9"
+    )
+
+    assert "#status,calibration_sensor_restored,0,240x240 Auto" in statuses
 
 
 def test_decode_calibration_image_payload_rejects_non_jpeg_payload():
@@ -100,7 +163,25 @@ def test_usb_capture_sidecar_records_manifest_fields(tmp_path):
         timeout_s=12.5,
         firmware_version="0.1.0",
         calibration_path=tmp_path / "calibration.json",
-        settings={"workflow": "ground_homography"},
+        settings={
+            "workflow": "ground_homography",
+            "requested_sensor_opt_id": 5,
+            "requested_sensor_detail": "640x480 Calibration HQ",
+            "previous_sensor_opt_id": 0,
+            "previous_sensor_detail": "240x240 Auto",
+            "selected_sensor_opt_id": 5,
+            "selected_sensor_detail": "640x480 Calibration HQ",
+            "restored_sensor_opt_id": 0,
+            "restored_sensor_detail": "240x240 Auto",
+            "sensor_restore_status": "restored",
+            "sscma_transport": "uart_921600",
+            "jpeg_qtable": "JPEG_ENC_QTABLE_4X",
+            "image_width": 640,
+            "image_height": 480,
+            "reported_jpeg_byte_count": 4,
+            "reported_base64_length": 8,
+            "reported_chunk_count": 1,
+        },
     )
 
     metadata = json.loads(capture.metadata_path.read_text(encoding="utf-8"))
@@ -112,5 +193,60 @@ def test_usb_capture_sidecar_records_manifest_fields(tmp_path):
     assert metadata["calibration_json_path"].endswith("calibration.json")
     assert metadata["settings"]["transport"] == "usb_serial"
     assert metadata["settings"]["workflow"] == "ground_homography"
+    assert metadata["settings"]["requested_sensor_opt_id"] == 5
+    assert metadata["settings"]["requested_sensor_detail"] == "640x480 Calibration HQ"
+    assert metadata["settings"]["previous_sensor_opt_id"] == 0
+    assert metadata["settings"]["selected_sensor_opt_id"] == 5
+    assert metadata["settings"]["sensor_restore_status"] == "restored"
+    assert metadata["settings"]["restored_sensor_detail"] == "240x240 Auto"
+    assert metadata["settings"]["sscma_transport"] == "uart_921600"
+    assert metadata["settings"]["jpeg_qtable"] == "JPEG_ENC_QTABLE_4X"
+    assert metadata["settings"]["image_width"] == 640
+    assert metadata["settings"]["reported_chunk_count"] == 1
     assert metadata["output_files"]["calibration_image"] == str(capture.image_path)
     assert metadata["output_files"]["metadata_json"] == str(capture.metadata_path)
+
+
+def test_usb_capture_status_lines_are_mapped_to_metadata_settings():
+    settings = {}
+    for line in [
+        "#status,calibration_sensor_requested,5,640x480 Calibration HQ",
+        "#status,calibration_sensor_previous,0,240x240 Auto",
+        "#status,calibration_sensor_selected,5,640x480 Calibration HQ",
+        "#status,calibration_sensor_restored,0,240x240 Auto",
+        "#status,calibration_capture_transport,uart_921600",
+        "#status,calibration_image_resolution,640,480",
+        "#status,calibration_jpeg_byte_count,12345",
+        "#status,calibration_base64_length,16460",
+        "#status,calibration_chunk_count,5",
+        "#status,calibration_sample_sensor_opt_id,5",
+        "#status,calibration_jpeg_qtable,JPEG_ENC_QTABLE_4X",
+    ]:
+        settings.update(_capture_settings_from_status_line(line))
+
+    assert settings == {
+        "requested_sensor_opt_id": 5,
+        "requested_sensor_detail": "640x480 Calibration HQ",
+        "previous_sensor_opt_id": 0,
+        "previous_sensor_detail": "240x240 Auto",
+        "selected_sensor_opt_id": 5,
+        "selected_sensor_detail": "640x480 Calibration HQ",
+        "restored_sensor_opt_id": 0,
+        "restored_sensor_detail": "240x240 Auto",
+        "sensor_restore_status": "restored",
+        "sscma_transport": "uart_921600",
+        "image_width": 640,
+        "image_height": 480,
+        "reported_jpeg_byte_count": 12345,
+        "reported_base64_length": 16460,
+        "reported_chunk_count": 5,
+        "calibsample_sensor_opt_id": 5,
+        "jpeg_qtable": "JPEG_ENC_QTABLE_4X",
+    }
+
+    assert _capture_settings_from_status_line(
+        "#error,calibration_sensor_restore_failed,response_timeout"
+    ) == {
+        "sensor_restore_error": "response_timeout",
+        "sensor_restore_status": "failed",
+    }
