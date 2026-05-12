@@ -81,35 +81,23 @@ Change `COM5` to the XIAO serial port.
 
 ### HX6538 Calibration Firmware
 
-High-quality calibration capture needs a patched Grove Vision AI V2 HX6538/SSCMA firmware. The full SDK clones live under `external/` and are ignored by git; this repo tracks only helper scripts and the patch file.
+High-quality calibration capture requires a custom Grove Vision AI V2 HX6538/SSCMA firmware build. The modified source files live under `firmware/hx6538/sscma-overrides/` and are tracked by git. The large SDK clones land under `external/` and are ignored by git.
 
-Prepare the SDK clones:
+`build.ps1` clones the SDKs if needed, overlays the project's custom sources, compiles the firmware, generates the HX6538 boot image, and optionally flashes it. Requires the Arm GNU toolchain and `make` on `PATH`.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\firmware\hx6538\setup_sdks.ps1
-```
-
-Apply the calibration patch to `external\SSCMA-Micro`:
+Build and flash (replace `COM3` with the actual Grove Vision AI V2 serial port):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\firmware\hx6538\apply_sscma_patch.ps1
+.\firmware\hx6538\build.ps1 -Port COM3
 ```
 
-The patch adds `AT+CALIBSAMPLE=1`, which emits chunked `CALIBSAMPLE` JSON events, and adds Grove Vision AI V2 sensor preset `opt_id=5` as `640x480 Calibration HQ` using `JPEG_ENC_QTABLE_4X`. Existing `opt_id` values `0`, `1`, and `2` are unchanged. The Himax examples SDK is cloned for the HX6538 toolchain, image generation, and flashing flow; the AT command implementation itself is in the patched `external\SSCMA-Micro` tree.
-
-After building the Grove V2 SSCMA firmware from the patched `SSCMA-Micro` sources, generate and flash the HX6538 image using the Himax SDK flow:
+Build without flashing (useful to verify the compile step without a device):
 
 ```powershell
-cd external\Seeed_Grove_Vision_AI_Module_V2\EPII_CM55M_APP_S
-make clean
-make
-cd ..\we2_image_gen_local
-copy ..\EPII_CM55M_APP_S\obj_epii_evb_icv30_bdv10\gnu_epii_evb_WLCSP65\EPII_CM55M_gnu_epii_evb_WLCSP65_s.elf input_case1_secboot\
-.\we2_local_image_gen.exe project_case1_blp_wlcsp.json
-python ..\xmodem\xmodem_send.py --port COM_HX --baudrate=921600 --protocol=xmodem --file=output_case1_sec_wlcsp\output.img
+.\firmware\hx6538\build.ps1 -SkipFlash
 ```
 
-Use the actual Grove Vision AI V2 serial port instead of `COM_HX`. The Himax README documents the Arm GNU toolchain, `make`, image generation, bootloader menu, and XMODEM transfer details.
+The custom firmware adds `AT+CALIBSAMPLE=1`, which emits chunked `CALIBSAMPLE` JSON events, and adds sensor preset `opt_id=5` as `640x480 Calibration HQ` using `JPEG_ENC_QTABLE_4X`. Existing `opt_id` values `0`, `1`, and `2` are unchanged. The Himax README documents the Arm GNU toolchain, bootloader menu, and XMODEM transfer details.
 
 Wire the XIAO ESP32-C6 to the HX6538 UART before using `CALIB_CAPTURE`:
 
