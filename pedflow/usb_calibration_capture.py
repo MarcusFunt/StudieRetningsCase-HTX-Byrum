@@ -102,7 +102,7 @@ def request_calibration_image(
 
     _drain_post_capture_status(
         device,
-        min(deadline, time.monotonic() + POST_CAPTURE_STATUS_TIMEOUT_S),
+        time.monotonic() + POST_CAPTURE_STATUS_TIMEOUT_S,
         status_handler,
     )
     return decode_calibration_image_payload(payload)
