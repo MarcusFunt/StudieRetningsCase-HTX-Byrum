@@ -7,6 +7,8 @@ from pedflow.analysis import FlowAnalysisSettings, run_flow_analysis, write_anal
 from pedflow.geometry import apply_homography
 from pedflow.manual import (
     build_manual_calibration,
+    clip_manual_paths_to_measurement,
+    manual_measurement_grid_lines,
     manual_path_summaries,
     manual_paths_to_detections,
     run_manual_analysis,
@@ -39,6 +41,38 @@ def test_manual_calibration_maps_four_road_corners_to_ground_rectangle():
     assert calibration["dist"] == [0.0, 0.0, 0.0, 0.0, 0.0]
     assert calibration["calibration_quality"]["status"] == "warn"
     assert calibration["homography_quality"]["status"] == "pass"
+
+
+def test_manual_calibration_accepts_column_pair_corner_order():
+    clicked = [(10.0, 20.0), (10.0, 70.0), (110.0, 20.0), (110.0, 70.0)]
+
+    calibration = build_manual_calibration(clicked, length_m=10.0, width_m=5.0, image_size=(160, 90))
+
+    ordered = np.asarray([clicked[index - 1] for index in [1, 3, 4, 2]], dtype=np.float64)
+    projected = apply_homography(ordered, calibration["H_image_to_ground"])
+    np.testing.assert_allclose(
+        projected,
+        [[0.0, 0.0], [10.0, 0.0], [10.0, 5.0], [0.0, 5.0]],
+        atol=1e-8,
+    )
+    assert calibration["manual_corner_order"] == "paired_width_edges"
+    assert calibration["manual_corner_order_source_indices"] == [1, 3, 4, 2]
+
+
+def test_manual_calibration_accepts_row_pair_corner_order():
+    clicked = [(10.0, 20.0), (110.0, 20.0), (10.0, 70.0), (110.0, 70.0)]
+
+    calibration = build_manual_calibration(clicked, length_m=10.0, width_m=5.0, image_size=(160, 90))
+
+    ordered = np.asarray([clicked[index - 1] for index in [1, 2, 4, 3]], dtype=np.float64)
+    projected = apply_homography(ordered, calibration["H_image_to_ground"])
+    np.testing.assert_allclose(
+        projected,
+        [[0.0, 0.0], [10.0, 0.0], [10.0, 5.0], [0.0, 5.0]],
+        atol=1e-8,
+    )
+    assert calibration["manual_corner_order"] == "paired_length_edges"
+    assert calibration["manual_corner_order_source_indices"] == [1, 2, 4, 3]
 
 
 @pytest.mark.parametrize(
@@ -74,6 +108,51 @@ def test_manual_paths_become_monotonic_synthetic_detection_rows():
         [50.0, 50.0, 60.0, 60.0, 60.0],
     )
     assert detections["confidence"].tolist() == [1.0] * 5
+
+
+def test_manual_paths_can_preserve_absolute_synthetic_timestamps():
+    paths = [
+        [(10.0, 50.0, 20.0), (20.0, 50.0, 21.0)],
+        [(30.0, 60.0, 5.0), (40.0, 60.0, 6.0)],
+    ]
+
+    detections = manual_paths_to_detections(paths, preserve_timestamps=True)
+
+    assert detections["timestamp_ms"].tolist() == [5000, 6000, 20000, 21000]
+    assert detections["frame_id"].tolist() == [0, 1, 2, 3]
+
+
+def test_manual_grid_lines_project_to_image_space():
+    calibration = build_manual_calibration(
+        [(0.0, 0.0), (100.0, 0.0), (100.0, 50.0), (0.0, 50.0)],
+        length_m=10.0,
+        width_m=5.0,
+        image_size=(100, 50),
+    )
+
+    grid = manual_measurement_grid_lines(calibration, grid_size_m=5.0)
+
+    assert grid.iloc[0]["kind"] == "boundary"
+    assert len(grid) == 6
+    assert grid["xs"].map(len).min() >= 2
+
+
+def test_manual_paths_are_clipped_to_measurement_grid():
+    calibration = build_manual_calibration(
+        [(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)],
+        length_m=10.0,
+        width_m=10.0,
+        image_size=(100, 100),
+    )
+    paths = [[(-50.0, 50.0, 0.0), (50.0, 50.0, 5.0), (150.0, 50.0, 10.0)]]
+
+    clipped = clip_manual_paths_to_measurement(paths, calibration)
+    detections = manual_paths_to_detections(clipped, preserve_timestamps=True)
+
+    assert len(clipped) == 1
+    assert clipped[0][0]["x"] == pytest.approx(0.0)
+    assert clipped[0][-1]["x"] == pytest.approx(100.0)
+    assert detections["timestamp_ms"].tolist() == [2500, 5000, 7500]
 
 
 def test_manual_path_gaps_create_separate_tracks():

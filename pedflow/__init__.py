@@ -14,7 +14,13 @@ from .geometry import (
     undistort_points,
     validate_detection_input,
 )
-from .manual import build_manual_calibration, manual_paths_to_detections, run_manual_analysis
+from .manual import (
+    build_manual_calibration,
+    clip_manual_paths_to_measurement,
+    manual_measurement_grid_lines,
+    manual_paths_to_detections,
+    run_manual_analysis,
+)
 from .metrics import add_dwell_flags, estimate_speeds, summarize_flow
 from .tracking import filter_short_tracks, link_detections
 
@@ -26,11 +32,13 @@ __all__ = [
     "bbox_foot_points",
     "build_manual_calibration",
     "calibrate_camera_from_charuco",
+    "clip_manual_paths_to_measurement",
     "detections_to_ground",
     "estimate_speeds",
     "filter_short_tracks",
     "generate_charuco_board",
     "link_detections",
+    "manual_measurement_grid_lines",
     "manual_paths_to_detections",
     "run_flow_analysis",
     "run_manual_analysis",

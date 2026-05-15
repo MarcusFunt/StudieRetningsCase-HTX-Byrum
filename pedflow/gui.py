@@ -36,7 +36,14 @@ try:
     )
     from .debug_panel import UsbDebugPanel
     from .geometry import load_calibration, save_calibration
-    from .manual import build_manual_calibration, manual_path_summaries, manual_paths_to_detections
+    from .manual import (
+        build_manual_calibration,
+        clip_manual_paths_to_measurement,
+        manual_measurement_grid_lines,
+        manual_path_length_m,
+        manual_path_summaries,
+        manual_paths_to_detections,
+    )
     from .operations_panel import OperationsPanel
     from .ui_helpers import (
         directory_options,
@@ -66,6 +73,9 @@ except ImportError:
     from pedflow.geometry import load_calibration, save_calibration
     from pedflow.manual import (
         build_manual_calibration,
+        clip_manual_paths_to_measurement,
+        manual_measurement_grid_lines,
+        manual_path_length_m,
         manual_path_summaries,
         manual_paths_to_detections,
     )
@@ -1170,6 +1180,40 @@ class ManualPanel:
             value=4.0,
             start=0.01,
         )
+        self.floor_grid_size_m = pn.widgets.FloatInput(
+            name="Floor grid (m)",
+            value=1.0,
+            start=0.1,
+        )
+        self.synthetic_timing_mode = pn.widgets.RadioButtonGroup(
+            name="Synthetic timing",
+            options=["Drag timing", "Set speed"],
+            value="Drag timing",
+            button_type="default",
+        )
+        self.synthetic_speed_m_s = pn.widgets.FloatInput(
+            name="Speed (m/s)",
+            value=1.4,
+            start=0.05,
+        )
+        self.synthetic_next_start_s = pn.widgets.FloatInput(
+            name="Next path start (s)",
+            value=0.0,
+            start=0.0,
+        )
+        self.synthetic_time_step_s = pn.widgets.FloatInput(
+            name="Time step (s)",
+            value=5.0,
+            start=0.1,
+        )
+        self.synthetic_path_gap_s = pn.widgets.FloatInput(
+            name="Auto gap after path (s)",
+            value=2.0,
+            start=0.0,
+        )
+        self.time_back_button = pn.widgets.Button(name="- step", height=38)
+        self.time_forward_button = pn.widgets.Button(name="+ step", height=38)
+        self.time_reset_button = pn.widgets.Button(name="Reset time", height=38)
         output_options = self._output_options()
         self.output_dir = pn.widgets.Select(
             name="Output folder",
@@ -1216,18 +1260,30 @@ class ManualPanel:
 
         self._image_source = ColumnDataSource(data={"url": [], "x": [], "y": [], "w": [], "h": []})
         self._corner_source = ColumnDataSource(data={"x": [], "y": [], "label": []})
+        self._grid_source = ColumnDataSource(
+            data={"xs": [], "ys": [], "kind": [], "color": [], "line_width": [], "alpha": []}
+        )
         self._path_source = ColumnDataSource(
-            data={"xs": [], "ys": [], "label": [], "duration_s": []}
+            data={"xs": [], "ys": [], "label": [], "duration_s": [], "start_s": [], "speed_m_s": []}
         )
         self.figure = self._build_canvas()
         self.canvas = pn.pane.Bokeh(self.figure, sizing_mode="scale_width")
 
         self.image_upload.param.watch(self._on_image_upload, "value")
         self.canvas_mode.param.watch(self._on_canvas_mode_change, "value")
+        self.road_length_m.param.watch(self._on_manual_geometry_change, "value")
+        self.road_width_m.param.watch(self._on_manual_geometry_change, "value")
+        self.floor_grid_size_m.param.watch(self._on_manual_geometry_change, "value")
+        self.synthetic_timing_mode.param.watch(self._on_synthetic_timing_change, "value")
+        self.synthetic_speed_m_s.param.watch(self._on_synthetic_timing_change, "value")
+        self.synthetic_path_gap_s.param.watch(self._on_synthetic_timing_change, "value")
         self.refresh_files_button.on_click(self._on_refresh_files)
         self.clear_corners_button.on_click(self._on_clear_corners)
         self.clear_paths_button.on_click(self._on_clear_paths)
         self.run_button.on_click(self._on_run)
+        self.time_back_button.on_click(self._on_time_back)
+        self.time_forward_button.on_click(self._on_time_forward)
+        self.time_reset_button.on_click(self._on_time_reset)
         self._path_source.on_change("data", self._on_path_source_data)
 
     def panel(self) -> pn.Column:
@@ -1246,6 +1302,19 @@ class ManualPanel:
             self.canvas_mode,
             self.road_length_m,
             self.road_width_m,
+            self.floor_grid_size_m,
+            _section_title("Synthetic timing", "Manual paths"),
+            self.synthetic_timing_mode,
+            self.synthetic_speed_m_s,
+            self.synthetic_next_start_s,
+            self.synthetic_time_step_s,
+            self.synthetic_path_gap_s,
+            pn.Row(
+                self.time_back_button,
+                self.time_forward_button,
+                self.time_reset_button,
+                css_classes=["pedflow-button-row"],
+            ),
             self.output_dir,
             self.refresh_files_button,
             pn.Row(
@@ -1309,6 +1378,14 @@ class ManualPanel:
             anchor="top_left",
             source=self._image_source,
         )
+        plot.multi_line(
+            xs="xs",
+            ys="ys",
+            source=self._grid_source,
+            line_color="color",
+            line_width="line_width",
+            line_alpha="alpha",
+        )
         path_renderer = plot.multi_line(
             xs="xs",
             ys="ys",
@@ -1367,6 +1444,8 @@ class ManualPanel:
             const count = xs.length;
             const durations = Array.from(data.duration_s || []);
             const labels = Array.from(data.label || []);
+            const starts = Array.from(data.start_s || []);
+            const speeds = Array.from(data.speed_m_s || []);
             let changed = false;
 
             while (durations.length < count) {
@@ -1375,6 +1454,14 @@ class ManualPanel:
             }
             while (labels.length < count) {
                 labels.push(String(labels.length + 1));
+                changed = true;
+            }
+            while (starts.length < count) {
+                starts.push(null);
+                changed = true;
+            }
+            while (speeds.length < count) {
+                speeds.push(null);
                 changed = true;
             }
 
@@ -1397,6 +1484,8 @@ class ManualPanel:
                 path_source._manual_syncing = true;
                 data.duration_s = durations;
                 data.label = labels;
+                data.start_s = starts;
+                data.speed_m_s = speeds;
                 path_source.change.emit();
                 path_source._manual_syncing = false;
             }
@@ -1410,6 +1499,8 @@ class ManualPanel:
             const hasActiveIndex = Number.isInteger(activeIndex) && activeIndex >= 0 && activeIndex < count;
             const durations = Array.from(data.duration_s || []);
             const labels = Array.from(data.label || []);
+            const starts = Array.from(data.start_s || []);
+            const speeds = Array.from(data.speed_m_s || []);
 
             path_source._manual_dragging = false;
             path_source._manual_pending_duration_s = duration;
@@ -1420,10 +1511,18 @@ class ManualPanel:
             while (labels.length < count) {
                 labels.push(String(labels.length + 1));
             }
+            while (starts.length < count) {
+                starts.push(null);
+            }
+            while (speeds.length < count) {
+                speeds.push(null);
+            }
             if (hasActiveIndex) {
                 durations[activeIndex] = duration;
                 data.duration_s = durations;
                 data.label = labels;
+                data.start_s = starts;
+                data.speed_m_s = speeds;
                 path_source.change.emit();
             }
         """
@@ -1443,6 +1542,9 @@ class ManualPanel:
     def _image_data_url(self, raw: bytes) -> str:
         encoded = base64.b64encode(raw).decode("ascii")
         return f"data:{self._image_mime_type};base64,{encoded}"
+
+    def _empty_path_source_data(self) -> dict[str, list[object]]:
+        return {"xs": [], "ys": [], "label": [], "duration_s": [], "start_s": [], "speed_m_s": []}
 
     def _on_image_upload(self, _event: object) -> None:
         raw = self.image_upload.value
@@ -1483,6 +1585,7 @@ class ManualPanel:
         self.figure.y_range.end = 0
         self._update_corner_source()
         self._update_path_sources()
+        self._update_grid_source()
         self._set_draw_tool_state()
         self._set_status(
             "Image loaded",
@@ -1527,6 +1630,7 @@ class ManualPanel:
             return
         self._corners.append(point)
         self._update_corner_source()
+        self._update_grid_source()
         self._set_draw_tool_state()
         if len(self._corners) == 4:
             self._set_status(
@@ -1557,6 +1661,36 @@ class ManualPanel:
         else:
             self._set_status("Mark corners", "Click road corners in the documented order.")
 
+    def _on_manual_geometry_change(self, _event: object) -> None:
+        self._update_grid_source()
+        self._update_path_summary()
+        if len(self._corners) == 4:
+            try:
+                calibration = self._current_calibration()
+                order = calibration.get("manual_corner_order", "manual")
+                self._set_status(
+                    "Floor grid updated",
+                    f"Using {order} corner order. Synthetic paths are clipped to the grid.",
+                    kind="success",
+                )
+            except Exception as exc:
+                self._set_status("Grid unavailable", str(exc), kind="danger")
+
+    def _on_synthetic_timing_change(self, _event: object) -> None:
+        self._retime_path_source(update_next_start=True)
+        self._update_path_summary()
+
+    def _on_time_back(self, _event: object) -> None:
+        step = max(float(self.synthetic_time_step_s.value), 0.0)
+        self.synthetic_next_start_s.value = max(0.0, float(self.synthetic_next_start_s.value) - step)
+
+    def _on_time_forward(self, _event: object) -> None:
+        step = max(float(self.synthetic_time_step_s.value), 0.0)
+        self.synthetic_next_start_s.value = float(self.synthetic_next_start_s.value) + step
+
+    def _on_time_reset(self, _event: object) -> None:
+        self.synthetic_next_start_s.value = 0.0
+
     def _set_draw_tool_state(self) -> None:
         if self._freehand_tool is None:
             return
@@ -1568,26 +1702,153 @@ class ManualPanel:
         self._freehand_tool.visible = enabled
         self.figure.toolbar.active_drag = self._freehand_tool if enabled else None
 
+    def _grid_source_data(self) -> dict[str, list[object]]:
+        try:
+            if len(self._corners) != 4 or self._image_size is None:
+                raise ValueError("grid needs four corners")
+            calibration = self._current_calibration()
+            grid = manual_measurement_grid_lines(calibration, float(self.floor_grid_size_m.value))
+        except Exception:
+            return {"xs": [], "ys": [], "kind": [], "color": [], "line_width": [], "alpha": []}
+        return {
+            "xs": grid["xs"].tolist(),
+            "ys": grid["ys"].tolist(),
+            "kind": grid["kind"].tolist(),
+            "color": grid["color"].tolist(),
+            "line_width": grid["line_width"].tolist(),
+            "alpha": grid["alpha"].tolist(),
+        }
+
+    def _update_grid_source(self) -> None:
+        self._grid_source.data = self._grid_source_data()
+
+    def _coerce_source_list(self, data: dict, key: str, count: int, default: object) -> list[object]:
+        values = list(data.get(key, []))
+        if len(values) < count:
+            values.extend([default] * (count - len(values)))
+        return values[:count]
+
+    def _duration_from_speed(self, xs: list[float], ys: list[float], fallback_s: float) -> float:
+        if self.synthetic_timing_mode.value != "Set speed":
+            return max(fallback_s, 0.05)
+        try:
+            calibration = self._current_calibration()
+            speed = max(float(self.synthetic_speed_m_s.value), 0.05)
+            points = [
+                {"x": float(x), "y": float(y), "elapsed_s": float(index)}
+                for index, (x, y) in enumerate(zip(xs, ys, strict=True))
+            ]
+            length_m = manual_path_length_m(points, calibration, clip_to_measurement=True)
+            if length_m <= 0:
+                length_m = manual_path_length_m(points, calibration, clip_to_measurement=False)
+            return max(length_m / speed, 0.05)
+        except Exception:
+            return max(fallback_s, 0.05)
+
+    def _normalized_path_source_data(
+        self,
+        data: dict,
+        update_next_start: bool,
+    ) -> dict[str, list[object]]:
+        xs_values = list(data.get("xs", []))
+        ys_values = list(data.get("ys", []))
+        count = min(len(xs_values), len(ys_values))
+        xs_values = xs_values[:count]
+        ys_values = ys_values[:count]
+        labels = self._coerce_source_list(data, "label", count, None)
+        drag_durations = self._coerce_source_list(data, "duration_s", count, None)
+        starts = self._coerce_source_list(data, "start_s", count, None)
+
+        cursor_s = float(self.synthetic_next_start_s.value)
+        gap_s = max(float(self.synthetic_path_gap_s.value), 0.0)
+        normalized_starts: list[float] = []
+        normalized_durations: list[float] = []
+        normalized_speeds: list[float | None] = []
+        normalized_labels: list[str] = []
+        assigned_missing_start = False
+
+        for index, (xs, ys) in enumerate(zip(xs_values, ys_values, strict=True)):
+            missing_start = False
+            try:
+                start_s = float(starts[index])
+                if not math.isfinite(start_s) or start_s < 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                start_s = cursor_s
+                missing_start = True
+                assigned_missing_start = True
+            try:
+                fallback_duration = float(drag_durations[index])
+                if not math.isfinite(fallback_duration) or fallback_duration <= 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                fallback_duration = max((len(xs) - 1) * 0.1, 0.05)
+
+            duration_s = self._duration_from_speed(list(xs), list(ys), fallback_duration)
+            normalized_starts.append(float(start_s))
+            normalized_durations.append(float(duration_s))
+            normalized_labels.append(str(labels[index] or index + 1))
+            normalized_speeds.append(
+                float(self.synthetic_speed_m_s.value)
+                if self.synthetic_timing_mode.value == "Set speed"
+                else None
+            )
+            if missing_start:
+                cursor_s = start_s + duration_s + gap_s
+
+        if update_next_start and count:
+            suggested_next = normalized_starts[-1] + normalized_durations[-1] + gap_s
+            current_next = float(self.synthetic_next_start_s.value)
+            if assigned_missing_start or (normalized_starts[-1] <= current_next <= suggested_next):
+                self.synthetic_next_start_s.value = max(0.0, suggested_next)
+
+        return {
+            "xs": xs_values,
+            "ys": ys_values,
+            "label": normalized_labels,
+            "duration_s": normalized_durations,
+            "start_s": normalized_starts,
+            "speed_m_s": normalized_speeds,
+        }
+
+    def _retime_path_source(self, update_next_start: bool = False) -> None:
+        if not self._path_source.data.get("xs"):
+            return
+        normalized = self._normalized_path_source_data(
+            self._path_source.data,
+            update_next_start=update_next_start,
+        )
+        self._syncing_path_source = True
+        self._path_source.data = normalized
+        self._syncing_path_source = False
+        self._paths = self._paths_from_source(normalized)
+
     def _on_path_source_data(self, _attr: str, _old: dict, new: dict) -> None:
         if self._syncing_path_source:
             return
-        self._paths = self._paths_from_source(new)
+        normalized = self._normalized_path_source_data(new, update_next_start=True)
+        self._syncing_path_source = True
+        self._path_source.data = normalized
+        self._syncing_path_source = False
+        self._paths = self._paths_from_source(normalized)
         self._update_path_summary()
         if self._paths:
             self._set_status(
                 "Manual path added",
-                f"Recorded {len(self._paths)} walking path(s).",
+                f"Recorded {len(self._paths)} walking path(s); analysis will use only grid intersections.",
                 kind="success",
             )
 
     def _paths_from_source(self, data: dict) -> list[list[dict[str, float]]]:
         paths: list[list[dict[str, float]]] = []
         durations = list(data.get("duration_s", []))
+        starts = list(data.get("start_s", []))
         for index, (xs, ys) in enumerate(
             zip(data.get("xs", []), data.get("ys", []), strict=False)
         ):
             duration = durations[index] if index < len(durations) else None
-            points = self._timed_path_from_line(xs, ys, duration)
+            start_s = starts[index] if index < len(starts) else 0.0
+            points = self._timed_path_from_line(xs, ys, duration, start_s)
             if len(points) >= 2:
                 paths.append(points)
         return paths
@@ -1597,6 +1858,7 @@ class ManualPanel:
         xs: list[float],
         ys: list[float],
         duration_s: object,
+        start_s: object = 0.0,
     ) -> list[dict[str, float]]:
         if len(xs) != len(ys) or len(xs) < 2:
             return []
@@ -1606,6 +1868,12 @@ class ManualPanel:
             duration = max((len(xs) - 1) * 0.1, 0.1)
         if not math.isfinite(duration) or duration <= 0:
             duration = max((len(xs) - 1) * 0.1, 0.1)
+        try:
+            start = float(start_s)
+        except (TypeError, ValueError):
+            start = 0.0
+        if not math.isfinite(start) or start < 0:
+            start = 0.0
 
         coordinates = np.asarray(list(zip(xs, ys, strict=True)), dtype=np.float64)
         segment_lengths = np.hypot(np.diff(coordinates[:, 0]), np.diff(coordinates[:, 1]))
@@ -1616,7 +1884,7 @@ class ManualPanel:
             cumulative = np.insert(np.cumsum(segment_lengths), 0, 0.0)
             elapsed = cumulative / total_length * duration
         return [
-            {"x": float(x), "y": float(y), "elapsed_s": float(t)}
+            {"x": float(x), "y": float(y), "elapsed_s": float(start + t)}
             for x, y, t in zip(coordinates[:, 0], coordinates[:, 1], elapsed, strict=True)
         ]
 
@@ -1625,6 +1893,7 @@ class ManualPanel:
         self._paths.clear()
         self._update_corner_source()
         self._update_path_sources()
+        self._update_grid_source()
         self._set_draw_tool_state()
         self._set_status("Corners cleared", "Click four road corners to rebuild homography.")
 
@@ -1654,12 +1923,20 @@ class ManualPanel:
             for path in self._paths
             if len(path) >= 2
         ]
+        starts = [path[0]["elapsed_s"] for path in self._paths if len(path) >= 2]
         self._syncing_path_source = True
         self._path_source.data = {
             "xs": [[point["x"] for point in path] for path in self._paths],
             "ys": [[point["y"] for point in path] for path in self._paths],
             "label": [str(index) for index in range(1, len(self._paths) + 1)],
             "duration_s": durations,
+            "start_s": starts,
+            "speed_m_s": [
+                float(self.synthetic_speed_m_s.value)
+                if self.synthetic_timing_mode.value == "Set speed"
+                else None
+                for _path in self._paths
+            ],
         }
         self._syncing_path_source = False
         self._update_path_summary()
@@ -1670,13 +1947,15 @@ class ManualPanel:
             return
         try:
             calibration = self._current_calibration()
-            summary = manual_path_summaries(self._paths, calibration)
+            summary = manual_path_summaries(self._paths, calibration, clip_to_measurement=True)
         except Exception:
             summary = pd.DataFrame(
                 [
                     {
                         "path_id": index,
                         "points": len(path),
+                        "start_s": path[0]["elapsed_s"],
+                        "end_s": path[-1]["elapsed_s"],
                         "duration_s": path[-1]["elapsed_s"] - path[0]["elapsed_s"],
                         "path_length_m": np.nan,
                         "mean_speed_m_s": np.nan,
@@ -1696,7 +1975,12 @@ class ManualPanel:
             self._image_size,
         )
 
-    def _manual_inputs(self, calibration_path: Path, detections_path: Path) -> dict:
+    def _manual_inputs(
+        self,
+        calibration_path: Path,
+        detections_path: Path,
+        clipped_paths: list[list[dict[str, float]]],
+    ) -> dict:
         width, height = self._image_size or (0, 0)
         return {
             "schema_version": 1,
@@ -1718,14 +2002,25 @@ class ManualPanel:
                 "length plus width",
                 "width direction",
             ],
+            "corner_order_mode": self._current_calibration().get("manual_corner_order"),
+            "corner_order_source_indices": self._current_calibration().get(
+                "manual_corner_order_source_indices"
+            ),
             "corners_px": self._corners,
-            "paths": self._paths,
+            "raw_paths": self._paths,
+            "measurement_clipped_paths": clipped_paths,
+            "synthetic_timing": {
+                "mode": self.synthetic_timing_mode.value,
+                "speed_m_s": float(self.synthetic_speed_m_s.value),
+                "path_gap_s": float(self.synthetic_path_gap_s.value),
+                "grid_size_m": float(self.floor_grid_size_m.value),
+            },
             "output_files": {
                 "manual_calibration_json": str(calibration_path),
                 "manual_detections_csv": str(detections_path),
             },
             "notes": (
-                "Manual mode data is synthetic and uses literal drag duration as walking time."
+                "Manual mode data is synthetic. Detection rows are clipped to the measured floor grid."
             ),
         }
 
@@ -1748,11 +2043,22 @@ class ManualPanel:
 
             started_utc = datetime.now(UTC).isoformat()
             calibration = self._current_calibration()
+            clipped_paths = clip_manual_paths_to_measurement(self._paths, calibration)
+            if not clipped_paths:
+                raise ValueError("Draw at least one path segment inside the floor grid")
             save_calibration(calibration, calibration_path)
-            detections = manual_paths_to_detections(self._paths)
+            detections = manual_paths_to_detections(
+                clipped_paths,
+                path_gap_s=0.0,
+                preserve_timestamps=True,
+            )
             detections.to_csv(detections_path, index=False)
             with inputs_path.open("w", encoding="utf-8") as file:
-                json.dump(self._manual_inputs(calibration_path, detections_path), file, indent=2)
+                json.dump(
+                    self._manual_inputs(calibration_path, detections_path, clipped_paths),
+                    file,
+                    indent=2,
+                )
                 file.write("\n")
 
             self.result = run_flow_analysis(detections, calibration, MANUAL_ANALYSIS_SETTINGS)

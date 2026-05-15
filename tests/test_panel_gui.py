@@ -70,6 +70,12 @@ def test_primary_workflow_controls_are_selectors_instead_of_path_text_inputs():
     assert isinstance(manual.road_width_m, pn.widgets.FloatInput)
     assert manual.road_length_m.value == 6.0
     assert manual.road_width_m.value == 4.0
+    assert isinstance(manual.floor_grid_size_m, pn.widgets.FloatInput)
+    assert isinstance(manual.synthetic_timing_mode, pn.widgets.RadioButtonGroup)
+    assert isinstance(manual.synthetic_speed_m_s, pn.widgets.FloatInput)
+    assert isinstance(manual.synthetic_next_start_s, pn.widgets.FloatInput)
+    assert isinstance(manual.time_back_button, pn.widgets.Button)
+    assert isinstance(manual.time_forward_button, pn.widgets.Button)
     assert isinstance(manual.output_dir, pn.widgets.Select)
     assert isinstance(manual.run_button, pn.widgets.Button)
     assert isinstance(manual.path_summary_table, pn.widgets.Tabulator)
@@ -84,10 +90,11 @@ def test_manual_panel_freehand_paths_sync_to_python_state():
     manual._image_size = (640, 360)
     manual._corners = [
         {"x": 0.0, "y": 0.0},
+        {"x": 0.0, "y": 360.0},
         {"x": 640.0, "y": 0.0},
         {"x": 640.0, "y": 360.0},
-        {"x": 0.0, "y": 360.0},
     ]
+    manual._update_grid_source()
     manual.canvas_mode.value = "Draw walking paths"
     manual._set_draw_tool_state()
 
@@ -99,8 +106,12 @@ def test_manual_panel_freehand_paths_sync_to_python_state():
         "ys": [[200.0, 220.0, 220.0]],
         "label": ["1"],
         "duration_s": [2.4],
+        "start_s": [5.0],
+        "speed_m_s": [None],
     }
 
     assert len(manual._paths) == 1
-    assert manual._paths[0][-1]["elapsed_s"] == pytest.approx(2.4)
+    assert manual._paths[0][0]["elapsed_s"] == pytest.approx(5.0)
+    assert manual._paths[0][-1]["elapsed_s"] == pytest.approx(7.4)
     assert len(manual.path_summary_table.value) == 1
+    assert len(manual._grid_source.data["xs"]) > 0
