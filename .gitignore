@@ -16,4 +16,5 @@ outputs/**/*.json
 outputs/**/*.csv
 outputs/**/*.png
 outputs/**/*.pdf
+outputs/**/*.html
 !outputs/README.md

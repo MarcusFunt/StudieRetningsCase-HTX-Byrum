@@ -1,16 +1,24 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import html
 import io
 import json
+import math
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+import cv2
 import holoviews as hv
 import hvplot.pandas  # noqa: F401
 import numpy as np
 import pandas as pd
 import panel as pn
+from bokeh.events import MouseMove, Press, PressUp, Tap
+from bokeh.models import ColumnDataSource, LabelSet
+from bokeh.plotting import figure
 
 try:
     from .analysis import (
@@ -29,6 +37,7 @@ try:
     )
     from .debug_panel import UsbDebugPanel
     from .geometry import load_calibration, save_calibration
+    from .manual import build_manual_calibration, manual_path_summaries, manual_paths_to_detections
     from .operations_panel import OperationsPanel
     from .ui_helpers import (
         directory_options,
@@ -56,6 +65,11 @@ except ImportError:
     )
     from pedflow.debug_panel import UsbDebugPanel
     from pedflow.geometry import load_calibration, save_calibration
+    from pedflow.manual import (
+        build_manual_calibration,
+        manual_path_summaries,
+        manual_paths_to_detections,
+    )
     from pedflow.operations_panel import OperationsPanel
     from pedflow.ui_helpers import (
         directory_options,
@@ -71,6 +85,19 @@ except ImportError:
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INTRINSICS_IMAGE_DIR = "data/calibration_images/charuco"
 GROUND_IMAGE_DIR = "data/calibration_images/ground"
+MANUAL_OUTPUT_DIR = "outputs/manual"
+MANUAL_ANALYSIS_SETTINGS = FlowAnalysisSettings(
+    confidence_threshold=0.5,
+    max_matching_speed_m_s=50.0,
+    close_after_s=1.0,
+    min_track_duration_s=0.0,
+    min_detections=2,
+    smoothing_alpha=1.0,
+    speed_window_s=0.5,
+    stop_speed_threshold_m_s=0.2,
+    stop_duration_threshold_s=1.0,
+    grid_size_m=0.5,
+)
 
 pn.extension("tabulator")
 pn.config.sizing_mode = "stretch_width"
@@ -1111,6 +1138,602 @@ class AnalysisPanel:
         ]
 
 
+class ManualPanel:
+    def __init__(self, project_root: Path) -> None:
+        self.project_root = project_root
+        self.result: FlowAnalysisResult | None = None
+        self._image_bytes: bytes | None = None
+        self._image_filename = "uploaded_image"
+        self._image_mime_type = "image/png"
+        self._image_size: tuple[int, int] | None = None
+        self._corners: list[dict[str, float]] = []
+        self._paths: list[list[dict[str, float]]] = []
+        self._active_path: list[dict[str, float]] = []
+        self._active_started_s: float | None = None
+
+        self.image_upload = pn.widgets.FileInput(
+            name="Road image",
+            accept=".png,.jpg,.jpeg,image/png,image/jpeg",
+        )
+        self.canvas_mode = pn.widgets.RadioButtonGroup(
+            name="Canvas mode",
+            options=["Mark road corners", "Draw walking paths"],
+            value="Mark road corners",
+            button_type="default",
+        )
+        self.road_length_m = pn.widgets.FloatInput(
+            name="Road length (m)",
+            value=10.0,
+            start=0.01,
+        )
+        self.road_width_m = pn.widgets.FloatInput(
+            name="Road width (m)",
+            value=4.0,
+            start=0.01,
+        )
+        output_options = self._output_options()
+        self.output_dir = pn.widgets.Select(
+            name="Output folder",
+            options=output_options,
+            value=keep_or_first(MANUAL_OUTPUT_DIR, output_options),
+        )
+        self.refresh_files_button = pn.widgets.Button(name="Refresh folders", height=38)
+        self.clear_corners_button = pn.widgets.Button(name="Clear road corners", height=38)
+        self.clear_paths_button = pn.widgets.Button(name="Clear walking paths", height=38)
+        self.run_button = pn.widgets.Button(
+            name="Run manual analysis",
+            button_type="primary",
+            height=42,
+            sizing_mode="stretch_width",
+        )
+
+        self.status = pn.pane.HTML(
+            _status_html(
+                "Ready",
+                "Upload a road image, mark four corners, then drag walking paths.",
+            )
+        )
+        self.metrics = pn.pane.HTML(_metrics_html(0, 0, 0, 0), sizing_mode="stretch_width")
+        self.corner_table = pn.widgets.Tabulator(pd.DataFrame(), pagination="remote", page_size=4)
+        self.path_summary_table = pn.widgets.Tabulator(
+            pd.DataFrame(), pagination="remote", page_size=8
+        )
+        self.summary_table = pn.widgets.Tabulator(pd.DataFrame(), pagination="remote", page_size=10)
+        self.track_summary_table = pn.widgets.Tabulator(
+            pd.DataFrame(), pagination="remote", page_size=12
+        )
+        self.grid_table = pn.widgets.Tabulator(pd.DataFrame(), pagination="remote", page_size=12)
+        self.tracks_table = pn.widgets.Tabulator(pd.DataFrame(), pagination="remote", page_size=12)
+        self.plots = pn.Tabs(
+            ("Paths", _empty_plot("No manual path data yet")),
+            ("Count", _empty_plot("No manual count data yet")),
+            ("Position", _empty_plot("No manual position heatmap data yet")),
+            ("Speed", _empty_plot("No manual speed heatmap data yet")),
+            ("Dwell", _empty_plot("No manual dwell map data yet")),
+            ("Bottleneck", _empty_plot("No manual bottleneck data yet")),
+            dynamic=True,
+            css_classes=["pedflow-tabs"],
+        )
+
+        self._image_source = ColumnDataSource(data={"url": [], "x": [], "y": [], "w": [], "h": []})
+        self._corner_source = ColumnDataSource(data={"x": [], "y": [], "label": []})
+        self._path_source = ColumnDataSource(data={"xs": [], "ys": [], "label": []})
+        self._active_path_source = ColumnDataSource(data={"xs": [], "ys": []})
+        self.figure = self._build_canvas()
+        self.canvas = pn.pane.Bokeh(self.figure, sizing_mode="stretch_width")
+
+        self.image_upload.param.watch(self._on_image_upload, "value")
+        self.refresh_files_button.on_click(self._on_refresh_files)
+        self.clear_corners_button.on_click(self._on_clear_corners)
+        self.clear_paths_button.on_click(self._on_clear_paths)
+        self.run_button.on_click(self._on_run)
+
+    def panel(self) -> pn.Column:
+        workflow = _workflow_note(
+            "Manual test workflow",
+            (
+                "Upload one road image.",
+                "Click four ground-plane corners in order: origin, length, length+width, width.",
+                "Switch to drawing mode and drag each pedestrian path at the intended walking pace.",
+                "Run manual analysis to write synthetic inputs and the standard QA outputs.",
+            ),
+        )
+        controls = pn.Column(
+            _section_title("Image and scale", "Manual homography"),
+            self.image_upload,
+            self.canvas_mode,
+            self.road_length_m,
+            self.road_width_m,
+            self.output_dir,
+            self.refresh_files_button,
+            pn.Row(
+                self.clear_corners_button,
+                self.clear_paths_button,
+                css_classes=["pedflow-button-row"],
+            ),
+            self.run_button,
+            css_classes=["pedflow-controls"],
+            max_width=420,
+            sizing_mode="stretch_width",
+        )
+        tables = pn.Tabs(
+            ("Corners", self.corner_table),
+            ("Manual paths", self.path_summary_table),
+            ("Summary", self.summary_table),
+            ("Track summaries", self.track_summary_table),
+            ("Grid metrics", self.grid_table),
+            ("Processed tracks", self.tracks_table),
+            dynamic=True,
+            css_classes=["pedflow-tabs"],
+        )
+        results = pn.Column(
+            self.status,
+            self.metrics,
+            pn.Tabs(
+                ("Canvas", self.canvas),
+                ("Plots", self.plots),
+                ("Tables", tables),
+                dynamic=True,
+                css_classes=["pedflow-tabs"],
+            ),
+            css_classes=["pedflow-results"],
+            sizing_mode="stretch_width",
+        )
+        return pn.Column(
+            workflow,
+            pn.Row(controls, results, css_classes=["pedflow-layout", "pedflow-workspace"]),
+            sizing_mode="stretch_width",
+        )
+
+    def _build_canvas(self):
+        plot = figure(
+            title="Manual road image",
+            height=560,
+            width=860,
+            x_range=(0, 1),
+            y_range=(1, 0),
+            tools="wheel_zoom,reset,save",
+            toolbar_location="above",
+            match_aspect=True,
+            sizing_mode="stretch_width",
+        )
+        plot.image_url(
+            url="url",
+            x="x",
+            y="y",
+            w="w",
+            h="h",
+            anchor="top_left",
+            source=self._image_source,
+        )
+        plot.multi_line(
+            xs="xs",
+            ys="ys",
+            source=self._path_source,
+            line_color="#1f6f78",
+            line_width=3,
+            line_alpha=0.85,
+        )
+        plot.multi_line(
+            xs="xs",
+            ys="ys",
+            source=self._active_path_source,
+            line_color="#d4741c",
+            line_width=3,
+            line_dash="dashed",
+        )
+        plot.scatter(
+            x="x",
+            y="y",
+            source=self._corner_source,
+            size=12,
+            color="#d83b2d",
+            line_color="white",
+            line_width=1.5,
+        )
+        labels = LabelSet(
+            x="x",
+            y="y",
+            text="label",
+            source=self._corner_source,
+            x_offset=7,
+            y_offset=-7,
+            text_color="#d83b2d",
+            text_font_size="12px",
+            text_font_style="bold",
+        )
+        plot.add_layout(labels)
+        plot.on_event(Tap, self._on_canvas_tap)
+        plot.on_event(Press, self._on_canvas_press)
+        plot.on_event(MouseMove, self._on_canvas_move)
+        plot.on_event(PressUp, self._on_canvas_release)
+        return plot
+
+    def _output_options(self) -> list[str]:
+        return directory_options(self.project_root, ("outputs",), (MANUAL_OUTPUT_DIR,))
+
+    def _on_refresh_files(self, _event: object) -> None:
+        output_options = self._output_options()
+        self.output_dir.options = output_options
+        self.output_dir.value = keep_or_first(str(self.output_dir.value), output_options)
+
+    def _image_data_url(self, raw: bytes) -> str:
+        encoded = base64.b64encode(raw).decode("ascii")
+        return f"data:{self._image_mime_type};base64,{encoded}"
+
+    def _on_image_upload(self, _event: object) -> None:
+        raw = self.image_upload.value
+        if not raw:
+            return
+
+        image_bytes = bytes(raw)
+        decoded = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+        if decoded is None:
+            self.status.object = _status_html(
+                "Image upload failed",
+                "Could not decode the uploaded image.",
+                kind="danger",
+            )
+            return
+
+        filename = self.image_upload.filename or "uploaded_image"
+        lower_name = filename.lower()
+        self._image_mime_type = "image/jpeg" if lower_name.endswith((".jpg", ".jpeg")) else "image/png"
+        self._image_filename = filename
+        self._image_bytes = image_bytes
+        height, width = decoded.shape[:2]
+        self._image_size = (int(width), int(height))
+        self._corners.clear()
+        self._paths.clear()
+        self._active_path.clear()
+        self._active_started_s = None
+
+        self._image_source.data = {
+            "url": [self._image_data_url(image_bytes)],
+            "x": [0],
+            "y": [0],
+            "w": [width],
+            "h": [height],
+        }
+        self.figure.x_range.start = 0
+        self.figure.x_range.end = width
+        self.figure.y_range.start = height
+        self.figure.y_range.end = 0
+        self._update_corner_source()
+        self._update_path_sources()
+        self._set_status(
+            "Image loaded",
+            f"{filename} ({width} x {height}px). Mark four road corners next.",
+            kind="success",
+        )
+
+    def _canvas_point(self, event: object) -> dict[str, float] | None:
+        if self._image_size is None:
+            return None
+        event_x = getattr(event, "x", None)
+        event_y = getattr(event, "y", None)
+        if event_x is None or event_y is None:
+            return None
+        x = float(event_x)
+        y = float(event_y)
+        width, height = self._image_size
+        if x < 0 or y < 0 or x > width or y > height:
+            return None
+        return {"x": x, "y": y}
+
+    def _on_canvas_tap(self, event: Tap) -> None:
+        if self.canvas_mode.value != "Mark road corners":
+            return
+        point = self._canvas_point(event)
+        if point is None:
+            self._set_status("No image point", "Upload an image and click inside it.", kind="danger")
+            return
+        if len(self._corners) >= 4:
+            self._set_status(
+                "Corners already set",
+                "Clear road corners before marking a new homography.",
+                kind="danger",
+            )
+            return
+        self._corners.append(point)
+        self._update_corner_source()
+        if len(self._corners) == 4:
+            self._set_status(
+                "Road corners ready",
+                "Switch to Draw walking paths and drag each pedestrian path.",
+                kind="success",
+            )
+        else:
+            self._set_status(
+                "Corner marked",
+                f"Marked {len(self._corners)} of 4 road corners.",
+            )
+
+    def _on_canvas_press(self, event: Press) -> None:
+        if self.canvas_mode.value != "Draw walking paths":
+            return
+        if len(self._corners) != 4:
+            self._set_status(
+                "Road calibration needed",
+                "Mark four road corners before drawing walking paths.",
+                kind="danger",
+            )
+            return
+        point = self._canvas_point(event)
+        if point is None:
+            return
+        self._active_started_s = time.perf_counter()
+        self._active_path = [{**point, "elapsed_s": 0.0}]
+        self._update_active_path_source()
+
+    def _on_canvas_move(self, event: MouseMove) -> None:
+        if self._active_started_s is None or not self._active_path:
+            return
+        point = self._canvas_point(event)
+        if point is None:
+            return
+        elapsed_s = time.perf_counter() - self._active_started_s
+        previous = self._active_path[-1]
+        distance_px = math.hypot(point["x"] - previous["x"], point["y"] - previous["y"])
+        time_delta_s = elapsed_s - previous["elapsed_s"]
+        if distance_px < 4.0 and time_delta_s < 0.075:
+            return
+        self._active_path.append({**point, "elapsed_s": elapsed_s})
+        self._update_active_path_source()
+
+    def _on_canvas_release(self, event: PressUp) -> None:
+        if self._active_started_s is None or not self._active_path:
+            return
+        point = self._canvas_point(event)
+        if point is not None:
+            elapsed_s = time.perf_counter() - self._active_started_s
+            last = self._active_path[-1]
+            if point["x"] != last["x"] or point["y"] != last["y"]:
+                self._active_path.append({**point, "elapsed_s": elapsed_s})
+            else:
+                last["elapsed_s"] = max(last["elapsed_s"], elapsed_s)
+
+        if len(self._active_path) >= 2:
+            self._paths.append(list(self._active_path))
+            self._set_status(
+                "Manual path added",
+                f"Recorded {len(self._paths)} walking path(s).",
+                kind="success",
+            )
+        else:
+            self._set_status("Path ignored", "Drag at least a small line to add a path.")
+
+        self._active_path = []
+        self._active_started_s = None
+        self._update_active_path_source()
+        self._update_path_sources()
+
+    def _on_clear_corners(self, _event: object) -> None:
+        self._corners.clear()
+        self._update_corner_source()
+        self._set_status("Corners cleared", "Click four road corners to rebuild homography.")
+
+    def _on_clear_paths(self, _event: object) -> None:
+        self._paths.clear()
+        self._active_path.clear()
+        self._active_started_s = None
+        self._update_path_sources()
+        self._update_active_path_source()
+        self._set_status("Paths cleared", "Drag new walking paths when ready.")
+
+    def _update_corner_source(self) -> None:
+        self._corner_source.data = {
+            "x": [corner["x"] for corner in self._corners],
+            "y": [corner["y"] for corner in self._corners],
+            "label": [str(index) for index in range(1, len(self._corners) + 1)],
+        }
+        self.corner_table.value = _rounded_frame(
+            pd.DataFrame(
+                [
+                    {"corner": index, "image_x": corner["x"], "image_y": corner["y"]}
+                    for index, corner in enumerate(self._corners, start=1)
+                ]
+            )
+        )
+
+    def _update_path_sources(self) -> None:
+        self._path_source.data = {
+            "xs": [[point["x"] for point in path] for path in self._paths],
+            "ys": [[point["y"] for point in path] for path in self._paths],
+            "label": [str(index) for index in range(1, len(self._paths) + 1)],
+        }
+        self._update_path_summary()
+
+    def _update_active_path_source(self) -> None:
+        if not self._active_path:
+            self._active_path_source.data = {"xs": [], "ys": []}
+            return
+        self._active_path_source.data = {
+            "xs": [[point["x"] for point in self._active_path]],
+            "ys": [[point["y"] for point in self._active_path]],
+        }
+
+    def _update_path_summary(self) -> None:
+        if not self._paths:
+            self.path_summary_table.value = pd.DataFrame()
+            return
+        try:
+            calibration = self._current_calibration()
+            summary = manual_path_summaries(self._paths, calibration)
+        except Exception:
+            summary = pd.DataFrame(
+                [
+                    {
+                        "path_id": index,
+                        "points": len(path),
+                        "duration_s": path[-1]["elapsed_s"] - path[0]["elapsed_s"],
+                        "path_length_m": np.nan,
+                        "mean_speed_m_s": np.nan,
+                    }
+                    for index, path in enumerate(self._paths, start=1)
+                ]
+            )
+        self.path_summary_table.value = _rounded_frame(summary)
+
+    def _current_calibration(self) -> dict:
+        if self._image_size is None:
+            raise ValueError("Upload an image before building manual calibration")
+        return build_manual_calibration(
+            self._corners,
+            float(self.road_length_m.value),
+            float(self.road_width_m.value),
+            self._image_size,
+        )
+
+    def _manual_inputs(self, calibration_path: Path, detections_path: Path) -> dict:
+        width, height = self._image_size or (0, 0)
+        return {
+            "schema_version": 1,
+            "session_type": "manual_mode",
+            "created_utc": datetime.now(UTC).isoformat(),
+            "image": {
+                "filename": self._image_filename,
+                "width_px": width,
+                "height_px": height,
+                "sha256": hashlib.sha256(self._image_bytes or b"").hexdigest(),
+            },
+            "road_dimensions_m": {
+                "length": float(self.road_length_m.value),
+                "width": float(self.road_width_m.value),
+            },
+            "corner_order": [
+                "origin",
+                "length direction",
+                "length plus width",
+                "width direction",
+            ],
+            "corners_px": self._corners,
+            "paths": self._paths,
+            "output_files": {
+                "manual_calibration_json": str(calibration_path),
+                "manual_detections_csv": str(detections_path),
+            },
+            "notes": (
+                "Manual mode data is synthetic and uses literal drag duration as walking time."
+            ),
+        }
+
+    def _on_run(self, _event: object) -> None:
+        self.run_button.loading = True
+        self._set_status("Running", "Generating synthetic detections and analysis outputs.")
+        try:
+            if self._image_bytes is None or self._image_size is None:
+                raise ValueError("Upload a road image first")
+            if len(self._corners) != 4:
+                raise ValueError("Mark exactly four road corners before running manual analysis")
+            if not self._paths:
+                raise ValueError("Draw at least one walking path before running manual analysis")
+
+            output = _resolve_path(self.project_root, str(self.output_dir.value))
+            output.mkdir(parents=True, exist_ok=True)
+            calibration_path = output / "manual_calibration.json"
+            detections_path = output / "manual_detections.csv"
+            inputs_path = output / "manual_inputs.json"
+
+            started_utc = datetime.now(UTC).isoformat()
+            calibration = self._current_calibration()
+            save_calibration(calibration, calibration_path)
+            detections = manual_paths_to_detections(self._paths)
+            detections.to_csv(detections_path, index=False)
+            with inputs_path.open("w", encoding="utf-8") as file:
+                json.dump(self._manual_inputs(calibration_path, detections_path), file, indent=2)
+                file.write("\n")
+
+            self.result = run_flow_analysis(detections, calibration, MANUAL_ANALYSIS_SETTINGS)
+            output_files = write_analysis_outputs(
+                self.result,
+                output,
+                settings=MANUAL_ANALYSIS_SETTINGS,
+                detections_path=detections_path,
+                calibration_path=calibration_path,
+                started_utc=started_utc,
+                ended_utc=datetime.now(UTC).isoformat(),
+            )
+            output_files["manual_inputs_json"] = inputs_path
+
+            self._update_outputs(self.result)
+            self._update_path_summary()
+            track_count = self.result.tracks["track_id"].nunique() if not self.result.tracks.empty else 0
+            self._set_status(
+                "Complete",
+                f"Manual analysis wrote {track_count:,} synthetic track(s) to {self.output_dir.value}.",
+                kind="success",
+            )
+        except Exception as exc:
+            self._set_status("Manual analysis failed", str(exc), kind="danger")
+        finally:
+            self.run_button.loading = False
+
+    def _set_status(self, title: str, message: str, kind: str = "info") -> None:
+        self.status.object = _status_html(title, message, kind)
+
+    def _update_outputs(self, result: FlowAnalysisResult) -> None:
+        summary = result.summary.iloc[0] if not result.summary.empty else pd.Series(dtype=float)
+        count = _indicator_value(summary.get("pedestrian_count", 0))
+        rate = _indicator_value(summary.get("people_per_hour", 0))
+        speed = _indicator_value(summary.get("median_speed_m_s", 0))
+        dwell = _indicator_value(summary.get("dwell_points", 0))
+        self.metrics.object = _metrics_html(count, rate, speed, dwell)
+
+        self.summary_table.value = _rounded_frame(result.summary)
+        self.track_summary_table.value = _rounded_frame(result.track_summaries)
+        self.grid_table.value = _rounded_frame(result.grid)
+        self.tracks_table.value = _rounded_frame(result.tracks)
+
+        bottleneck_grid = _bottleneck_grid(result.grid)
+        self.plots[:] = [
+            ("Paths", _paths_plot(result.tracks)),
+            ("Count", _count_plot(result.tracks)),
+            (
+                "Position",
+                _heatmap_plot(
+                    result.grid,
+                    "detection_count",
+                    "Pedestrian Position Heatmap",
+                    "Detections",
+                    "magma",
+                ),
+            ),
+            (
+                "Speed",
+                _heatmap_plot(
+                    result.grid.dropna(subset=["median_speed_m_s"])
+                    if "median_speed_m_s" in result.grid.columns
+                    else result.grid,
+                    "median_speed_m_s",
+                    "Median Speed Heatmap",
+                    "Median speed (m/s)",
+                    "plasma",
+                ),
+            ),
+            (
+                "Dwell",
+                _heatmap_plot(
+                    result.grid,
+                    "dwell_points",
+                    "Stop / Dwell Map",
+                    "Dwell points",
+                    "cividis",
+                ),
+            ),
+            (
+                "Bottleneck",
+                _heatmap_plot(
+                    bottleneck_grid,
+                    "bottleneck_index",
+                    "Bottleneck Index",
+                    "Density / speed",
+                    "inferno",
+                ),
+            ),
+        ]
+
+
 class CalibrationPanel:
     def __init__(self, project_root: Path) -> None:
         self.project_root = project_root
@@ -1943,6 +2566,7 @@ class PedFlowDashboard:
         self.calibration = CalibrationPanel(project_root)
         self.debug = UsbDebugPanel(project_root)
         self.operations = OperationsPanel(project_root)
+        self.manual = ManualPanel(project_root)
 
     def panel(self) -> pn.template.FastListTemplate:
         template = pn.template.FastListTemplate(
@@ -1953,6 +2577,7 @@ class PedFlowDashboard:
                     ("Calibration", self.calibration.panel()),
                     ("USB Debug", self.debug.panel()),
                     ("Operations", self.operations.panel()),
+                    ("Manual Mode", self.manual.panel()),
                     dynamic=True,
                     css_classes=["pedflow-tabs"],
                 )

@@ -138,12 +138,15 @@ Start the local Panel dashboard:
 
 ## Panel Dashboard
 
-The dashboard is the supported workflow. It has four top-level tabs:
+The dashboard is the supported workflow. It has five top-level tabs:
 
 - `Analysis`: pick discovered detection sessions and calibration files from dropdowns, upload files only when needed, tune advanced settings, view paths and heatmaps, inspect tables, and optionally write processed CSV outputs with PNG/HTML QA plots and an `analysis_manifest.json`.
 - `Calibration`: generate the printable ChArUco board, capture intrinsics photos and ground marker photos into separate folders, calibrate camera intrinsics, review RMS/per-image/skipped-image quality, and build ground homography either automatically from a flat ChArUco ground photo or from `data/ground_markers.csv` with residual quality checks.
 - `USB Debug`: pick a detected USB serial port, start local testing, and view live boxes, contact points, tracks, and PedPy outputs.
 - `Operations`: run the repo scripts from the GUI, including Wi-Fi/USB CSV capture, USB-only calibration image capture, Wi-Fi secret generation, ChArUco board generation, and logged PedPy/OpenCV analysis runs.
+- `Manual Mode`: upload a still road image, click four road-plane corners, drag approximate pedestrian paths at real drag speed, and write synthetic detections plus the normal analysis CSV, PNG, HTML, and manifest outputs into `outputs/manual/`.
+
+Manual mode is only for testing the analysis workflow when no sensor capture is available. It uses identity camera intrinsics and a user-clicked homography, so the outputs are approximate synthetic data rather than measurement-quality field data.
 
 Generate the printable ChArUco board from the command line if needed:
 
