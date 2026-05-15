@@ -6,7 +6,6 @@ import html
 import io
 import json
 import math
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -16,8 +15,8 @@ import hvplot.pandas  # noqa: F401
 import numpy as np
 import pandas as pd
 import panel as pn
-from bokeh.events import MouseMove, Press, PressUp, Tap
-from bokeh.models import ColumnDataSource, LabelSet
+from bokeh.events import PanEnd, PanStart, Tap
+from bokeh.models import ColumnDataSource, CustomJS, FreehandDrawTool, LabelSet
 from bokeh.plotting import figure
 
 try:
@@ -1148,8 +1147,8 @@ class ManualPanel:
         self._image_size: tuple[int, int] | None = None
         self._corners: list[dict[str, float]] = []
         self._paths: list[list[dict[str, float]]] = []
-        self._active_path: list[dict[str, float]] = []
-        self._active_started_s: float | None = None
+        self._syncing_path_source = False
+        self._freehand_tool: FreehandDrawTool | None = None
 
         self.image_upload = pn.widgets.FileInput(
             name="Road image",
@@ -1163,7 +1162,7 @@ class ManualPanel:
         )
         self.road_length_m = pn.widgets.FloatInput(
             name="Road length (m)",
-            value=10.0,
+            value=6.0,
             start=0.01,
         )
         self.road_width_m = pn.widgets.FloatInput(
@@ -1217,16 +1216,19 @@ class ManualPanel:
 
         self._image_source = ColumnDataSource(data={"url": [], "x": [], "y": [], "w": [], "h": []})
         self._corner_source = ColumnDataSource(data={"x": [], "y": [], "label": []})
-        self._path_source = ColumnDataSource(data={"xs": [], "ys": [], "label": []})
-        self._active_path_source = ColumnDataSource(data={"xs": [], "ys": []})
+        self._path_source = ColumnDataSource(
+            data={"xs": [], "ys": [], "label": [], "duration_s": []}
+        )
         self.figure = self._build_canvas()
-        self.canvas = pn.pane.Bokeh(self.figure, sizing_mode="stretch_width")
+        self.canvas = pn.pane.Bokeh(self.figure, sizing_mode="scale_width")
 
         self.image_upload.param.watch(self._on_image_upload, "value")
+        self.canvas_mode.param.watch(self._on_canvas_mode_change, "value")
         self.refresh_files_button.on_click(self._on_refresh_files)
         self.clear_corners_button.on_click(self._on_clear_corners)
         self.clear_paths_button.on_click(self._on_clear_paths)
         self.run_button.on_click(self._on_run)
+        self._path_source.on_change("data", self._on_path_source_data)
 
     def panel(self) -> pn.Column:
         workflow = _workflow_note(
@@ -1294,8 +1296,9 @@ class ManualPanel:
             y_range=(1, 0),
             tools="wheel_zoom,reset,save",
             toolbar_location="above",
+            aspect_ratio=860 / 560,
             match_aspect=True,
-            sizing_mode="stretch_width",
+            sizing_mode="scale_width",
         )
         plot.image_url(
             url="url",
@@ -1306,7 +1309,7 @@ class ManualPanel:
             anchor="top_left",
             source=self._image_source,
         )
-        plot.multi_line(
+        path_renderer = plot.multi_line(
             xs="xs",
             ys="ys",
             source=self._path_source,
@@ -1314,14 +1317,14 @@ class ManualPanel:
             line_width=3,
             line_alpha=0.85,
         )
-        plot.multi_line(
-            xs="xs",
-            ys="ys",
-            source=self._active_path_source,
-            line_color="#d4741c",
-            line_width=3,
-            line_dash="dashed",
+        self._freehand_tool = FreehandDrawTool(
+            renderers=[path_renderer],
+            num_objects=500,
+            description="Draw walking paths",
         )
+        self._freehand_tool.visible = False
+        plot.add_tools(self._freehand_tool)
+        plot.toolbar.active_drag = None
         plot.scatter(
             x="x",
             y="y",
@@ -1344,10 +1347,90 @@ class ManualPanel:
         )
         plot.add_layout(labels)
         plot.on_event(Tap, self._on_canvas_tap)
-        plot.on_event(Press, self._on_canvas_press)
-        plot.on_event(MouseMove, self._on_canvas_move)
-        plot.on_event(PressUp, self._on_canvas_release)
+        self._attach_freehand_timing(plot)
         return plot
+
+    def _attach_freehand_timing(self, plot) -> None:
+        start_code = """
+            path_source._manual_dragging = true;
+            path_source._manual_start_ms = performance.now();
+            path_source._manual_active_index = (path_source.data.xs || []).length;
+            path_source._manual_pending_duration_s = null;
+        """
+        update_code = """
+            if (path_source._manual_syncing) {
+                return;
+            }
+
+            const data = path_source.data;
+            const xs = data.xs || [];
+            const count = xs.length;
+            const durations = Array.from(data.duration_s || []);
+            const labels = Array.from(data.label || []);
+            let changed = false;
+
+            while (durations.length < count) {
+                durations.push(null);
+                changed = true;
+            }
+            while (labels.length < count) {
+                labels.push(String(labels.length + 1));
+                changed = true;
+            }
+
+            const activeIndex = path_source._manual_active_index;
+            const hasActiveIndex = Number.isInteger(activeIndex) && activeIndex >= 0 && activeIndex < count;
+            if (path_source._manual_dragging && hasActiveIndex) {
+                const started = path_source._manual_start_ms ?? performance.now();
+                durations[activeIndex] = Math.max((performance.now() - started) / 1000.0, 0.05);
+                changed = true;
+            } else if (
+                path_source._manual_pending_duration_s != null &&
+                hasActiveIndex &&
+                durations[activeIndex] == null
+            ) {
+                durations[activeIndex] = path_source._manual_pending_duration_s;
+                changed = true;
+            }
+
+            if (changed) {
+                path_source._manual_syncing = true;
+                data.duration_s = durations;
+                data.label = labels;
+                path_source.change.emit();
+                path_source._manual_syncing = false;
+            }
+        """
+        end_code = """
+            const data = path_source.data;
+            const count = (data.xs || []).length;
+            const started = path_source._manual_start_ms ?? performance.now();
+            const duration = Math.max((performance.now() - started) / 1000.0, 0.05);
+            const activeIndex = path_source._manual_active_index;
+            const hasActiveIndex = Number.isInteger(activeIndex) && activeIndex >= 0 && activeIndex < count;
+            const durations = Array.from(data.duration_s || []);
+            const labels = Array.from(data.label || []);
+
+            path_source._manual_dragging = false;
+            path_source._manual_pending_duration_s = duration;
+
+            while (durations.length < count) {
+                durations.push(null);
+            }
+            while (labels.length < count) {
+                labels.push(String(labels.length + 1));
+            }
+            if (hasActiveIndex) {
+                durations[activeIndex] = duration;
+                data.duration_s = durations;
+                data.label = labels;
+                path_source.change.emit();
+            }
+        """
+        callback_args = {"path_source": self._path_source}
+        plot.js_on_event(PanStart, CustomJS(args=callback_args, code=start_code))
+        self._path_source.js_on_change("data", CustomJS(args=callback_args, code=update_code))
+        plot.js_on_event(PanEnd, CustomJS(args=callback_args, code=end_code))
 
     def _output_options(self) -> list[str]:
         return directory_options(self.project_root, ("outputs",), (MANUAL_OUTPUT_DIR,))
@@ -1385,8 +1468,6 @@ class ManualPanel:
         self._image_size = (int(width), int(height))
         self._corners.clear()
         self._paths.clear()
-        self._active_path.clear()
-        self._active_started_s = None
 
         self._image_source.data = {
             "url": [self._image_data_url(image_bytes)],
@@ -1395,17 +1476,26 @@ class ManualPanel:
             "w": [width],
             "h": [height],
         }
+        self._fit_canvas_to_image(width, height)
         self.figure.x_range.start = 0
         self.figure.x_range.end = width
         self.figure.y_range.start = height
         self.figure.y_range.end = 0
         self._update_corner_source()
         self._update_path_sources()
+        self._set_draw_tool_state()
         self._set_status(
             "Image loaded",
             f"{filename} ({width} x {height}px). Mark four road corners next.",
             kind="success",
         )
+
+    def _fit_canvas_to_image(self, width: int, height: int) -> None:
+        if width <= 0 or height <= 0:
+            return
+        self.figure.aspect_ratio = width / height
+        self.figure.width = min(max(int(width), 420), 900)
+        self.figure.height = min(max(round(self.figure.width * height / width), 280), 720)
 
     def _canvas_point(self, event: object) -> dict[str, float] | None:
         if self._image_size is None:
@@ -1437,6 +1527,7 @@ class ManualPanel:
             return
         self._corners.append(point)
         self._update_corner_source()
+        self._set_draw_tool_state()
         if len(self._corners) == 4:
             self._set_status(
                 "Road corners ready",
@@ -1449,76 +1540,97 @@ class ManualPanel:
                 f"Marked {len(self._corners)} of 4 road corners.",
             )
 
-    def _on_canvas_press(self, event: Press) -> None:
-        if self.canvas_mode.value != "Draw walking paths":
-            return
-        if len(self._corners) != 4:
-            self._set_status(
-                "Road calibration needed",
-                "Mark four road corners before drawing walking paths.",
-                kind="danger",
-            )
-            return
-        point = self._canvas_point(event)
-        if point is None:
-            return
-        self._active_started_s = time.perf_counter()
-        self._active_path = [{**point, "elapsed_s": 0.0}]
-        self._update_active_path_source()
-
-    def _on_canvas_move(self, event: MouseMove) -> None:
-        if self._active_started_s is None or not self._active_path:
-            return
-        point = self._canvas_point(event)
-        if point is None:
-            return
-        elapsed_s = time.perf_counter() - self._active_started_s
-        previous = self._active_path[-1]
-        distance_px = math.hypot(point["x"] - previous["x"], point["y"] - previous["y"])
-        time_delta_s = elapsed_s - previous["elapsed_s"]
-        if distance_px < 4.0 and time_delta_s < 0.075:
-            return
-        self._active_path.append({**point, "elapsed_s": elapsed_s})
-        self._update_active_path_source()
-
-    def _on_canvas_release(self, event: PressUp) -> None:
-        if self._active_started_s is None or not self._active_path:
-            return
-        point = self._canvas_point(event)
-        if point is not None:
-            elapsed_s = time.perf_counter() - self._active_started_s
-            last = self._active_path[-1]
-            if point["x"] != last["x"] or point["y"] != last["y"]:
-                self._active_path.append({**point, "elapsed_s": elapsed_s})
+    def _on_canvas_mode_change(self, _event: object) -> None:
+        self._set_draw_tool_state()
+        if self.canvas_mode.value == "Draw walking paths":
+            if len(self._corners) != 4:
+                self._set_status(
+                    "Road calibration needed",
+                    "Mark four road corners before drawing walking paths.",
+                    kind="danger",
+                )
             else:
-                last["elapsed_s"] = max(last["elapsed_s"], elapsed_s)
+                self._set_status(
+                    "Draw paths",
+                    "Drag directly on the image; each stroke becomes one synthetic pedestrian.",
+                )
+        else:
+            self._set_status("Mark corners", "Click road corners in the documented order.")
 
-        if len(self._active_path) >= 2:
-            self._paths.append(list(self._active_path))
+    def _set_draw_tool_state(self) -> None:
+        if self._freehand_tool is None:
+            return
+        enabled = (
+            self.canvas_mode.value == "Draw walking paths"
+            and self._image_size is not None
+            and len(self._corners) == 4
+        )
+        self._freehand_tool.visible = enabled
+        self.figure.toolbar.active_drag = self._freehand_tool if enabled else None
+
+    def _on_path_source_data(self, _attr: str, _old: dict, new: dict) -> None:
+        if self._syncing_path_source:
+            return
+        self._paths = self._paths_from_source(new)
+        self._update_path_summary()
+        if self._paths:
             self._set_status(
                 "Manual path added",
                 f"Recorded {len(self._paths)} walking path(s).",
                 kind="success",
             )
-        else:
-            self._set_status("Path ignored", "Drag at least a small line to add a path.")
 
-        self._active_path = []
-        self._active_started_s = None
-        self._update_active_path_source()
-        self._update_path_sources()
+    def _paths_from_source(self, data: dict) -> list[list[dict[str, float]]]:
+        paths: list[list[dict[str, float]]] = []
+        durations = list(data.get("duration_s", []))
+        for index, (xs, ys) in enumerate(
+            zip(data.get("xs", []), data.get("ys", []), strict=False)
+        ):
+            duration = durations[index] if index < len(durations) else None
+            points = self._timed_path_from_line(xs, ys, duration)
+            if len(points) >= 2:
+                paths.append(points)
+        return paths
+
+    def _timed_path_from_line(
+        self,
+        xs: list[float],
+        ys: list[float],
+        duration_s: object,
+    ) -> list[dict[str, float]]:
+        if len(xs) != len(ys) or len(xs) < 2:
+            return []
+        try:
+            duration = float(duration_s)
+        except (TypeError, ValueError):
+            duration = max((len(xs) - 1) * 0.1, 0.1)
+        if not math.isfinite(duration) or duration <= 0:
+            duration = max((len(xs) - 1) * 0.1, 0.1)
+
+        coordinates = np.asarray(list(zip(xs, ys, strict=True)), dtype=np.float64)
+        segment_lengths = np.hypot(np.diff(coordinates[:, 0]), np.diff(coordinates[:, 1]))
+        total_length = float(segment_lengths.sum())
+        if total_length <= 0:
+            elapsed = np.linspace(0.0, duration, len(coordinates))
+        else:
+            cumulative = np.insert(np.cumsum(segment_lengths), 0, 0.0)
+            elapsed = cumulative / total_length * duration
+        return [
+            {"x": float(x), "y": float(y), "elapsed_s": float(t)}
+            for x, y, t in zip(coordinates[:, 0], coordinates[:, 1], elapsed, strict=True)
+        ]
 
     def _on_clear_corners(self, _event: object) -> None:
         self._corners.clear()
+        self._paths.clear()
         self._update_corner_source()
+        self._update_path_sources()
+        self._set_draw_tool_state()
         self._set_status("Corners cleared", "Click four road corners to rebuild homography.")
 
     def _on_clear_paths(self, _event: object) -> None:
         self._paths.clear()
-        self._active_path.clear()
-        self._active_started_s = None
         self._update_path_sources()
-        self._update_active_path_source()
         self._set_status("Paths cleared", "Drag new walking paths when ready.")
 
     def _update_corner_source(self) -> None:
@@ -1537,21 +1649,20 @@ class ManualPanel:
         )
 
     def _update_path_sources(self) -> None:
+        durations = [
+            max(path[-1]["elapsed_s"] - path[0]["elapsed_s"], 0.0)
+            for path in self._paths
+            if len(path) >= 2
+        ]
+        self._syncing_path_source = True
         self._path_source.data = {
             "xs": [[point["x"] for point in path] for path in self._paths],
             "ys": [[point["y"] for point in path] for path in self._paths],
             "label": [str(index) for index in range(1, len(self._paths) + 1)],
+            "duration_s": durations,
         }
+        self._syncing_path_source = False
         self._update_path_summary()
-
-    def _update_active_path_source(self) -> None:
-        if not self._active_path:
-            self._active_path_source.data = {"xs": [], "ys": []}
-            return
-        self._active_path_source.data = {
-            "xs": [[point["x"] for point in self._active_path]],
-            "ys": [[point["y"] for point in self._active_path]],
-        }
 
     def _update_path_summary(self) -> None:
         if not self._paths:

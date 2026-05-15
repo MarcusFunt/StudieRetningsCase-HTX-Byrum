@@ -68,6 +68,39 @@ def test_primary_workflow_controls_are_selectors_instead_of_path_text_inputs():
     assert isinstance(manual.image_upload, pn.widgets.FileInput)
     assert isinstance(manual.road_length_m, pn.widgets.FloatInput)
     assert isinstance(manual.road_width_m, pn.widgets.FloatInput)
+    assert manual.road_length_m.value == 6.0
+    assert manual.road_width_m.value == 4.0
     assert isinstance(manual.output_dir, pn.widgets.Select)
     assert isinstance(manual.run_button, pn.widgets.Button)
     assert isinstance(manual.path_summary_table, pn.widgets.Tabulator)
+
+
+def test_manual_panel_freehand_paths_sync_to_python_state():
+    pytest.importorskip("panel")
+
+    from pedflow.gui import ManualPanel
+
+    manual = ManualPanel(Path.cwd())
+    manual._image_size = (640, 360)
+    manual._corners = [
+        {"x": 0.0, "y": 0.0},
+        {"x": 640.0, "y": 0.0},
+        {"x": 640.0, "y": 360.0},
+        {"x": 0.0, "y": 360.0},
+    ]
+    manual.canvas_mode.value = "Draw walking paths"
+    manual._set_draw_tool_state()
+
+    assert manual._freehand_tool.__class__.__name__ == "FreehandDrawTool"
+    assert manual.figure.toolbar.active_drag is manual._freehand_tool
+
+    manual._path_source.data = {
+        "xs": [[100.0, 140.0, 220.0]],
+        "ys": [[200.0, 220.0, 220.0]],
+        "label": ["1"],
+        "duration_s": [2.4],
+    }
+
+    assert len(manual._paths) == 1
+    assert manual._paths[0][-1]["elapsed_s"] == pytest.approx(2.4)
+    assert len(manual.path_summary_table.value) == 1
