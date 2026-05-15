@@ -144,17 +144,7 @@ bool sendUdpLine(const char *line)
     return false;
   }
 
-  const uint8_t stationCount = static_cast<uint8_t>(WiFi.softAPgetStationNum());
-  if (stationCount == 0) {
-    return sendUdpPacket(WIFI_UDP_BROADCAST, line);
-  }
-
-  bool sent = false;
-  const uint8_t targetCount = min(stationCount, WIFI_AP_MAX_CLIENTS);
-  for (uint8_t host = 2; host < 2 + targetCount; ++host) {
-    sent = sendUdpPacket(IPAddress(192, 168, 4, host), line) || sent;
-  }
-  return sent;
+  return sendUdpPacket(WIFI_UDP_BROADCAST, line);
 }
 
 bool isUsbDebugActive()

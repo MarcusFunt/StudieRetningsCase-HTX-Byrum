@@ -9,23 +9,23 @@ description = "Privacy-preserving pedestrian flow analysis tools."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "numpy",
-    "pandas",
-    "pedpy",
-    "opencv-contrib-python",
-    "matplotlib",
-    "panel",
-    "holoviews",
-    "hvplot",
-    "pyviz-comms",
-    "pyserial",
-    "scipy",
+    "numpy>=2.2,<3",
+    "pandas>=2.2,<3",
+    "pedpy>=1.4,<2",
+    "opencv-contrib-python>=4.11,<5",
+    "matplotlib>=3.9,<4",
+    "panel>=1.7,<2",
+    "holoviews>=1.20,<2",
+    "hvplot>=0.11,<1",
+    "pyviz-comms>=3.0,<4",
+    "pyserial>=3.5,<4",
+    "scipy>=1.14,<2",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest",
-    "ruff",
+    "pytest>=8.4,<10",
+    "ruff>=0.15,<1",
 ]
 
 [tool.setuptools.packages.find]

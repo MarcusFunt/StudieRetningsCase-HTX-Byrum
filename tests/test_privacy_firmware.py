@@ -65,7 +65,8 @@ def test_field_firmware_sends_anonymous_rows_over_wifi_udp():
     assert "udp.endPacket()" in source
     assert "WIFI_UDP_BROADCAST" in source
     assert "WiFi.softAPgetStationNum()" in source
-    assert "IPAddress(192, 168, 4, host)" in source
+    assert "return sendUdpPacket(WIFI_UDP_BROADCAST, line);" in source
+    assert "IPAddress(192, 168, 4, host)" not in source
     assert "udpPacketFailureCount" in source
     assert "#status,udp_heartbeat" in source
     assert "PEDFLOW_FIRMWARE_VERSION" in source
